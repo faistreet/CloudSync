@@ -429,7 +429,26 @@ class PopupWindow(QWidget):
                 w = QWidget()
                 w.setLayout(t_box)
                 self.transfers_layout.addWidget(w)
-        elif not self.active_hydration:
+        elif self.active_hydration:
+            t_box = QVBoxLayout()
+            t_box.setSpacing(4)
+            f_name = self.active_hydration.get("file_name", "Descargando...")
+            f_bytes = self.active_hydration.get("file_bytes", 0)
+            f_total = self.active_hydration.get("file_total", 0)
+            f_idx = self.active_hydration.get("file_index")
+            f_count = self.active_hydration.get("total_files")
+            idx_str = f" ({f_idx}/{f_count})" if f_idx and f_count and f_count > 1 else ""
+            pct = int((f_bytes / f_total) * 100) if f_total > 0 else 0
+            t_lbl = QLabel(f"📥 Descargando: {f_name}{idx_str} ({format_bytes(f_bytes)} / {format_bytes(f_total)})")
+            t_lbl.setStyleSheet("color: #cbd5e1; font-size: 12px;")
+            pbar = QProgressBar()
+            pbar.setValue(pct)
+            t_box.addWidget(t_lbl)
+            t_box.addWidget(pbar)
+            w = QWidget()
+            w.setLayout(t_box)
+            self.transfers_layout.addWidget(w)
+        else:
             idle_lbl = QLabel("✓ Todos los archivos sincronizados")
             idle_lbl.setStyleSheet("color: #10b981; font-size: 12px; padding: 4px 0;")
             self.transfers_layout.addWidget(idle_lbl)
@@ -438,7 +457,6 @@ class PopupWindow(QWidget):
         """Called when a file is actively being downloaded via 'Mantener en este equipo'"""
         if not hydration_data:
             self.active_hydration = None
-            self.update_session_history_ui()
             return
 
         if hydration_data.get("event") == "file_completed":
@@ -456,7 +474,6 @@ class PopupWindow(QWidget):
         self.down_speed_label.setText(f"↓ Descarga: {format_bytes(speed)}/s")
         self.status_msg_label.setText("Descargando...")
         self.status_msg_label.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 13px;")
-        self.update_session_history_ui()
 
     def add_session_completed(self, file_name, file_size, speed, file_path=None, direction="down"):
         """Adds a completed download or upload to the in-memory session history (Quick Access)"""
@@ -493,30 +510,6 @@ class PopupWindow(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        # If currently downloading a file via pin
-        if self.active_hydration:
-            f_name = self.active_hydration.get("file_name", "Descargando...")
-            f_bytes = self.active_hydration.get("file_bytes", 0)
-            f_total = self.active_hydration.get("file_total", 0)
-            speed = self.active_hydration.get("speed", 0)
-            f_idx = self.active_hydration.get("file_index")
-            f_count = self.active_hydration.get("total_files")
-            idx_str = f" ({f_idx}/{f_count})" if f_idx and f_count and f_count > 1 else ""
-
-            pct = int((f_bytes / f_total) * 100) if f_total > 0 else 0
-
-            active_box = QVBoxLayout()
-            active_box.setSpacing(4)
-            lbl = QLabel(f"📥 <b>{f_name}</b>{idx_str} ({format_bytes(f_bytes)} / {format_bytes(f_total)}) - {format_bytes(speed)}/s")
-            lbl.setStyleSheet("color: #38bdf8; font-size: 12px;")
-            pbar = QProgressBar()
-            pbar.setValue(pct)
-            active_box.addWidget(lbl)
-            active_box.addWidget(pbar)
-            w = QWidget()
-            w.setLayout(active_box)
-            self.session_layout.addWidget(w)
-
         # Show completed session downloads (Quick Access list)
         if self.session_downloads:
             for item in self.session_downloads[:8]:
@@ -545,7 +538,7 @@ class PopupWindow(QWidget):
                 w = QWidget()
                 w.setLayout(row)
                 self.session_layout.addWidget(w)
-        elif not self.active_hydration:
+        else:
             empty_lbl = QLabel(
                 "No hay descargas en esta sesión (se reinicia al abrir la app).\n"
                 "• Para descargar sin conexión: Clic derecho en Dolphin → 'Mantener siempre en este equipo'\n"

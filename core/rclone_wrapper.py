@@ -61,8 +61,10 @@ class RcloneRCClient:
         return self.call("core/stats")
 
     def get_vfs_stats(self, remote_name=""):
-        params = {"fs": f"{remote_name}:"} if remote_name else {}
-        return self.call("vfs/stats", params)
+        res = self.call("vfs/stats")
+        if not res and remote_name:
+            res = self.call("vfs/stats", {"fs": f"{remote_name}:"})
+        return res
 
     def get_quota(self, remote_name=""):
         params = {"fs": f"{remote_name}:"} if remote_name else {}
