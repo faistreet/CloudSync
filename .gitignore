@@ -1,0 +1,65 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# User data, logs, and sockets
+*.log
+*.sock
+.cache/
+config.json
+rclone.conf
+
+# Temporary test previews and screenshots
+test_*.png
+assets/test_*.png
+
+# Core dumps
+core.[0-9]*
+*.core
+*.dump
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.kate-swp
+
+# KDE Plasma & Linux desktop metadata
+.directory
+.Trash-*
+.nfs*
