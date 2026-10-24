@@ -79,17 +79,42 @@ class CloudSyncApp:
 
         # SyncEngine signals
         self.sync_engine.stats_updated.connect(self.on_stats_updated)
+        self.sync_engine.transfer_completed.connect(self.on_transfer_completed)
 
     def on_stats_updated(self, stats):
         is_paused = stats.get("is_paused", False)
         active_transfers = stats.get("active_transfers", [])
+        down_speed = stats.get("download_speed", 0)
+        up_speed = stats.get("upload_speed", 0)
 
         if is_paused:
             self.tray.set_state("paused", "CloudSync - Pausado")
-        elif active_transfers or self.popup.active_hydration:
-            self.tray.set_state("syncing", "CloudSync - Sincronizando...")
+        elif active_transfers or down_speed > 0 or up_speed > 0 or self.popup.active_hydration:
+            if up_speed > down_speed and up_speed > 0:
+                self.tray.set_state("syncing", f"CloudSync - Subiendo: {format_bytes(up_speed)}/s")
+            else:
+                spd = max(down_speed, self.popup.active_hydration.get("speed", 0) if self.popup.active_hydration else 0)
+                self.tray.set_state("syncing", f"CloudSync - Descargando: {format_bytes(spd)}/s")
         else:
             self.tray.set_state("idle", "CloudSync - Todo al día")
+
+    def on_transfer_completed(self, item):
+        direction = item.get("direction", "down")
+        f_name = item.get("name", "Archivo")
+        f_size = item.get("size", 0)
+        speed = item.get("speed", 0)
+        f_path = item.get("path")
+
+        self.popup.add_session_completed(f_name, f_size, speed, file_path=f_path, direction=direction)
+        self.popup.update_cache_gauge()
+
+        if hasattr(self, "inspector_dlg") and self.inspector_dlg and self.inspector_dlg.isVisible():
+            self.inspector_dlg.refresh_current_folder()
+
+        if direction == "up":
+            self.notifications.send("Sincronizado en la nube", f"'{f_name}' ({format_bytes(f_size)}) subido a la nube.")
+        else:
+            self.notifications.send("Descargado bajo demanda", f"'{f_name}' ({format_bytes(f_size)}) disponible en este equipo.")
 
     def toggle_popup(self):
         if self.popup.isVisible():
@@ -131,6 +156,7 @@ class CloudSyncApp:
             target_path = self.config_manager.get_mount_path_for_account(folder_or_acc)
 
         self.inspector_dlg = FileInspectorDialog(self.config_manager, self.vfs_controller, target_path)
+        self.inspector_dlg.action_requested.connect(self.execute_file_action)
         self.inspector_dlg.file_action_triggered.connect(self.on_inspector_action)
         self.inspector_dlg.show()
         self.inspector_dlg.raise_()
@@ -161,31 +187,46 @@ class CloudSyncApp:
             return
 
         for target in paths:
-            target_fn = self.vfs_controller.pin_offline if action == "pin" else self.vfs_controller.free_space
+            self.execute_file_action(action, target)
 
-            def on_done(res, act=action, t=target):
-                self.popup.update_cache_gauge()
+    def execute_file_action(self, action, target_path):
+        target_fn = self.vfs_controller.pin_offline if action == "pin" else self.vfs_controller.free_space
 
-                fname = res.get("name", os.path.basename(t))
-                if res.get("success"):
-                    if act == "pin":
+        def on_prog(data):
+            if action == "pin":
+                self.popup.set_active_hydration(data)
+            if hasattr(self, "inspector_dlg") and self.inspector_dlg and self.inspector_dlg.isVisible():
+                self.inspector_dlg.on_action_progress(data)
+
+        def on_done(res):
+            self.popup.update_cache_gauge()
+            if hasattr(self, "inspector_dlg") and self.inspector_dlg and self.inspector_dlg.isVisible():
+                self.inspector_dlg.on_action_finished(res)
+
+            fname = res.get("name", os.path.basename(target_path))
+            if res.get("success"):
+                if action == "pin":
+                    if res.get("empty_folder"):
+                        self.notifications.send("Carpeta vacía", f"'{fname}' no contiene archivos para descargar.", urgency="low")
+                    else:
                         b_total = format_bytes(res.get("total_bytes", 0))
                         speed_str = format_bytes(res.get("speed", 0))
-                        self.popup.add_session_completed(fname, res.get("total_bytes", 0), res.get("speed", 0))
+                        f_path = res.get("path", target_path)
+                        self.popup.add_session_completed(fname, res.get("total_bytes", 0), res.get("speed", 0), file_path=f_path, direction="down")
                         self.notifications.send("Disponible sin conexión", f"'{fname}' ({b_total}) descargado a {speed_str}/s.")
-                    elif act == "free":
-                        b_freed = format_bytes(res.get("freed_bytes", 0))
-                        self.notifications.send("Espacio liberado", f"'{fname}' ({b_freed}) ahora es solo virtual en la nube.")
-                else:
-                    err = res.get("error", "Error desconocido")
-                    self.notifications.send("Error", err, urgency="warning")
+                elif action == "free":
+                    b_freed = format_bytes(res.get("freed_bytes", 0))
+                    self.notifications.send("Espacio liberado", f"'{fname}' ({b_freed}) ahora es solo virtual en la nube.")
+            else:
+                err = res.get("error", "Error desconocido")
+                self.notifications.send("Error", err, urgency="warning")
 
-            run_async_task(
-                target_fn,
-                args=(target,),
-                on_progress=self.popup.set_active_hydration if action == "pin" else None,
-                on_finished=on_done
-            )
+        run_async_task(
+            target_fn,
+            args=(target_path,),
+            on_progress=on_prog if action == "pin" else None,
+            on_finished=on_done
+        )
 
     def quit_app(self):
         print("[CloudSync] Cerrando aplicación y desmontando unidades...")

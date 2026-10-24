@@ -14,7 +14,8 @@ from core.task_runner import run_async_task
 
 
 class FileInspectorDialog(QDialog):
-    file_action_triggered = Signal(str, str) # action, path
+    action_requested = Signal(str, str) # action, path
+    file_action_triggered = Signal(str, str) # backwards compatibility
 
     def __init__(self, config_manager, vfs_controller, initial_folder=None, parent=None):
         super().__init__(parent)
@@ -262,6 +263,9 @@ class FileInspectorDialog(QDialog):
         item_data = item_cell.data(Qt.UserRole)
         if item_data and item_data.get("is_dir"):
             self.load_folder(item_data["path"])
+        elif item_data and not item_data.get("is_dir"):
+            import subprocess
+            subprocess.Popen(["xdg-open", item_data["path"]])
 
     def navigate_up(self):
         if self.current_folder and self.current_folder.parent:
@@ -280,18 +284,41 @@ class FileInspectorDialog(QDialog):
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0) # Indeterminate spinner
-
-        target_fn = self.vfs_controller.pin_offline if action == "pin" else self.vfs_controller.free_space
-        run_async_task(target_fn, args=(target_path,), on_finished=self.on_worker_finished)
-
+        self.action_requested.emit(action, target_path)
         self.file_action_triggered.emit(action, target_path)
 
-    def on_worker_finished(self, res):
+    def on_action_progress(self, data):
+        if not data:
+            return
+        if data.get("event") == "file_completed":
+            return
+        self.progress_bar.setVisible(True)
+        f_bytes = data.get("file_bytes", 0)
+        f_total = data.get("file_total", 0)
+        speed = data.get("speed", 0)
+        f_name = data.get("file_name", "")
+        f_idx = data.get("file_index")
+        f_count = data.get("total_files")
+        idx_str = f" ({f_idx}/{f_count})" if f_idx and f_count and f_count > 1 else ""
+
+        if f_total > 0:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(int((f_bytes / f_total) * 100))
+        else:
+            self.progress_bar.setRange(0, 0)
+
+        self.summary_label.setText(
+            f"Descargando {f_name}{idx_str} ({format_bytes(f_bytes)} / {format_bytes(f_total)}) a {format_bytes(speed)}/s"
+        )
+
+    def on_action_finished(self, res):
         self.progress_bar.setVisible(False)
         self.refresh_current_folder()
         fname = res.get("name", "Archivo")
         if res.get("success"):
-            if "total_bytes" in res:
+            if res.get("empty_folder"):
+                self.summary_label.setText(f"ℹ '{fname}' es una carpeta vacía.")
+            elif "total_bytes" in res:
                 b = format_bytes(res.get("total_bytes", 0))
                 self.summary_label.setText(f"✓ '{fname}' ({b}) disponible sin conexión.")
             else:
@@ -300,3 +327,6 @@ class FileInspectorDialog(QDialog):
         else:
             err = res.get("error", "Error desconocido")
             QMessageBox.warning(self, "Error", f"No se pudo completar la operación:\n{err}")
+
+    def on_worker_finished(self, res):
+        self.on_action_finished(res)

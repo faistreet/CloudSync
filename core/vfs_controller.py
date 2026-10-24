@@ -95,26 +95,46 @@ class VFSController:
         """
         import time
         path = Path(target_path).resolve()
-        if not path.exists():
-            return {"success": False, "error": f"El archivo o directorio no existe: {path}"}
+        try:
+            if not path.exists():
+                return {"success": False, "error": f"El archivo o directorio no existe: {path}"}
+        except Exception as e:
+            return {"success": False, "error": f"Error al acceder en la nube: {e}"}
 
         files_to_read = []
         if path.is_file():
             files_to_read.append(path)
         elif path.is_dir():
-            for root, _, files in os.walk(path):
-                for f in files:
-                    files_to_read.append(Path(root) / f)
+            def on_walk_err(err):
+                print(f"[VFSController] Warning walking: {err}")
+
+            try:
+                for root, dirs, files in os.walk(path, onerror=on_walk_err):
+                    for f in files:
+                        files_to_read.append(Path(root) / f)
+            except Exception as e:
+                return {"success": False, "error": f"Error al explorar carpeta: {e}"}
+
+        if not files_to_read:
+            return {
+                "success": True,
+                "name": path.name,
+                "files_count": 0,
+                "total_bytes": 0,
+                "speed": 0,
+                "empty_folder": True
+            }
 
         total_bytes = 0
         read_count = 0
         chunk_size = 2 * 1024 * 1024 # 2MB buffer
 
         start_time = time.time()
-        for fpath in files_to_read:
+        for idx, fpath in enumerate(files_to_read):
             try:
                 f_size = fpath.stat().st_size
                 current_file_bytes = 0
+                file_start = time.time()
                 with open(fpath, "rb") as f:
                     while True:
                         buf = f.read(chunk_size)
@@ -130,13 +150,28 @@ class VFSController:
                         if progress_callback:
                             progress_callback({
                                 "file_name": fpath.name,
+                                "path": str(fpath),
                                 "file_bytes": current_file_bytes,
                                 "file_total": f_size,
                                 "overall_bytes": total_bytes,
-                                "speed": speed
+                                "speed": speed,
+                                "file_index": idx + 1,
+                                "total_files": len(files_to_read)
                             })
 
                 read_count += 1
+                file_elapsed = max(0.001, time.time() - file_start)
+                file_speed = current_file_bytes / file_elapsed
+
+                if progress_callback and len(files_to_read) > 1:
+                    progress_callback({
+                        "event": "file_completed",
+                        "name": fpath.name,
+                        "path": str(fpath),
+                        "size": f_size,
+                        "speed": file_speed
+                    })
+
             except Exception as e:
                 print(f"[VFSController] Warning reading {fpath}: {e}")
 
@@ -144,6 +179,7 @@ class VFSController:
         return {
             "success": True,
             "name": path.name,
+            "path": str(path),
             "files_count": read_count,
             "total_bytes": total_bytes,
             "speed": total_bytes / elapsed_total

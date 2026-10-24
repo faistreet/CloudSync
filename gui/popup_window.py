@@ -366,14 +366,16 @@ class PopupWindow(QWidget):
             self.accounts_container.addWidget(card)
 
     def on_stats_updated(self, stats):
-        total_speed = stats.get("total_speed", 0)
+        down_speed = stats.get("download_speed", 0)
+        up_speed = stats.get("upload_speed", 0)
         is_paused = stats.get("is_paused", False)
         active_transfers = stats.get("active_transfers", [])
         accounts_data = stats.get("accounts", {})
 
-        # If we have active hydration from pin, include its speed
-        hydration_speed = self.active_hydration.get("speed", 0) if self.active_hydration else 0
-        display_down_speed = total_speed + hydration_speed
+        # If manual pin is actively hydrating, include its speed
+        if self.active_hydration:
+            hydration_speed = self.active_hydration.get("speed", 0)
+            down_speed = max(down_speed, hydration_speed)
 
         self.pause_btn.setText("Reanudar" if is_paused else "Pausar")
 
@@ -381,16 +383,24 @@ class PopupWindow(QWidget):
             self.down_speed_label.setText("↓ Pausado")
             self.up_speed_label.setText("↑ Pausado")
             self.status_msg_label.setText("Pausado")
+            self.status_msg_label.setStyleSheet("color: #f59e0b; font-weight: 600; font-size: 13px;")
             self.subtitle_lbl.setText("Sincronización en pausa")
-        elif active_transfers or self.active_hydration:
-            self.down_speed_label.setText(f"↓ Descarga: {format_bytes(display_down_speed)}/s")
-            self.up_speed_label.setText(f"↑ Subida: {format_bytes(total_speed * 0.2)}/s") # estimated upload
-            self.status_msg_label.setText("Sincronizando...")
-            self.subtitle_lbl.setText("Descargando / subiendo archivos")
+        elif down_speed > 0 or up_speed > 0 or active_transfers or self.active_hydration:
+            self.down_speed_label.setText(f"↓ Descarga: {format_bytes(down_speed)}/s")
+            self.up_speed_label.setText(f"↑ Subida: {format_bytes(up_speed)}/s")
+            if up_speed > down_speed and up_speed > 0:
+                self.status_msg_label.setText("Subiendo a la nube...")
+                self.status_msg_label.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 13px;")
+                self.subtitle_lbl.setText("Subiendo archivos a la nube")
+            else:
+                self.status_msg_label.setText("Descargando...")
+                self.status_msg_label.setStyleSheet("color: #34d399; font-weight: 600; font-size: 13px;")
+                self.subtitle_lbl.setText("Descargando archivos a este equipo")
         else:
             self.down_speed_label.setText("↓ Descarga: 0 B/s")
             self.up_speed_label.setText("↑ Subida: 0 B/s")
             self.status_msg_label.setText("Todo al día")
+            self.status_msg_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
             self.subtitle_lbl.setText("Archivos a petición activos")
 
         for acc_id, card in self.account_cards.items():
@@ -408,7 +418,9 @@ class PopupWindow(QWidget):
             for t in active_transfers[:4]:
                 t_box = QVBoxLayout()
                 t_box.setSpacing(4)
-                t_lbl = QLabel(f"{t['name']} ({format_bytes(t['bytes'])} / {format_bytes(t['size'])})")
+                t_dir = t.get("direction", "down")
+                dir_icon = "📤 Subiendo:" if t_dir == "up" else "📥 Descargando:"
+                t_lbl = QLabel(f"{dir_icon} {t['name']} ({format_bytes(t['bytes'])} / {format_bytes(t['size'])})")
                 t_lbl.setStyleSheet("color: #cbd5e1; font-size: 12px;")
                 pbar = QProgressBar()
                 pbar.setValue(int(t.get("percentage", 0)))
@@ -424,19 +436,56 @@ class PopupWindow(QWidget):
 
     def set_active_hydration(self, hydration_data):
         """Called when a file is actively being downloaded via 'Mantener en este equipo'"""
+        if not hydration_data:
+            self.active_hydration = None
+            self.update_session_history_ui()
+            return
+
+        if hydration_data.get("event") == "file_completed":
+            self.add_session_completed(
+                hydration_data["name"],
+                hydration_data.get("size", 0),
+                hydration_data.get("speed", 0),
+                file_path=hydration_data.get("path"),
+                direction="down"
+            )
+            return
+
         self.active_hydration = hydration_data
+        speed = hydration_data.get("speed", 0)
+        self.down_speed_label.setText(f"↓ Descarga: {format_bytes(speed)}/s")
+        self.status_msg_label.setText("Descargando...")
+        self.status_msg_label.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 13px;")
         self.update_session_history_ui()
 
-    def add_session_completed(self, file_name, file_size, speed):
-        """Adds a completed download to the in-memory session history"""
+    def add_session_completed(self, file_name, file_size, speed, file_path=None, direction="down"):
+        """Adds a completed download or upload to the in-memory session history (Quick Access)"""
+        now = time.time()
+        for prev in self.session_downloads[:3]:
+            if prev.get("name") == file_name and (now - prev.get("timestamp", 0)) < 2.0:
+                return
+
         self.active_hydration = None
         self.session_downloads.insert(0, {
             "name": file_name,
             "size": file_size,
             "speed": speed,
-            "time": time.strftime("%H:%M:%S")
+            "path": file_path,
+            "direction": direction,
+            "time": time.strftime("%H:%M:%S"),
+            "timestamp": now
         })
+        self.session_downloads = self.session_downloads[:20]
         self.update_session_history_ui()
+
+    def open_downloaded_item(self, target_path):
+        if target_path and os.path.exists(target_path):
+            if os.path.isdir(target_path):
+                subprocess.Popen(["dolphin", target_path])
+            else:
+                subprocess.Popen(["xdg-open", target_path])
+        else:
+            self.open_root_folder()
 
     def update_session_history_ui(self):
         while self.session_layout.count():
@@ -450,11 +499,15 @@ class PopupWindow(QWidget):
             f_bytes = self.active_hydration.get("file_bytes", 0)
             f_total = self.active_hydration.get("file_total", 0)
             speed = self.active_hydration.get("speed", 0)
+            f_idx = self.active_hydration.get("file_index")
+            f_count = self.active_hydration.get("total_files")
+            idx_str = f" ({f_idx}/{f_count})" if f_idx and f_count and f_count > 1 else ""
+
             pct = int((f_bytes / f_total) * 100) if f_total > 0 else 0
 
             active_box = QVBoxLayout()
             active_box.setSpacing(4)
-            lbl = QLabel(f"📥 <b>{f_name}</b> ({format_bytes(f_bytes)} / {format_bytes(f_total)}) - {format_bytes(speed)}/s")
+            lbl = QLabel(f"📥 <b>{f_name}</b>{idx_str} ({format_bytes(f_bytes)} / {format_bytes(f_total)}) - {format_bytes(speed)}/s")
             lbl.setStyleSheet("color: #38bdf8; font-size: 12px;")
             pbar = QProgressBar()
             pbar.setValue(pct)
@@ -464,13 +517,17 @@ class PopupWindow(QWidget):
             w.setLayout(active_box)
             self.session_layout.addWidget(w)
 
-        # Show completed session downloads (top 5)
+        # Show completed session downloads (Quick Access list)
         if self.session_downloads:
-            for item in self.session_downloads[:5]:
+            for item in self.session_downloads[:8]:
                 row = QHBoxLayout()
                 row.setSpacing(8)
-                lbl = QLabel(f"✓ <b>{item['name']}</b> ({format_bytes(item['size'])})")
-                lbl.setStyleSheet("color: #34d399; font-size: 12px;")
+
+                direction = item.get("direction", "down")
+                icon_str = "📥" if direction == "down" else "📤"
+                color_str = "#34d399" if direction == "down" else "#38bdf8"
+                lbl = QLabel(f"{icon_str} <b>{item['name']}</b> ({format_bytes(item['size'])})")
+                lbl.setStyleSheet(f"color: {color_str}; font-size: 12px;")
                 row.addWidget(lbl)
 
                 row.addStretch()
@@ -478,12 +535,24 @@ class PopupWindow(QWidget):
                 time_lbl.setStyleSheet("color: #64748b; font-size: 11px;")
                 row.addWidget(time_lbl)
 
+                open_btn = QPushButton("Abrir")
+                open_btn.setObjectName("secondaryBtn")
+                open_btn.setStyleSheet("padding: 2px 8px; font-size: 11px; min-height: 22px;")
+                target_p = item.get("path")
+                open_btn.clicked.connect(lambda _, p=target_p: self.open_downloaded_item(p))
+                row.addWidget(open_btn)
+
                 w = QWidget()
                 w.setLayout(row)
                 self.session_layout.addWidget(w)
         elif not self.active_hydration:
-            empty_lbl = QLabel("No hay descargas recientes en esta sesión.")
-            empty_lbl.setStyleSheet("color: #64748b; font-style: italic; font-size: 12px;")
+            empty_lbl = QLabel(
+                "No hay descargas en esta sesión (se reinicia al abrir la app).\n"
+                "• Para descargar sin conexión: Clic derecho en Dolphin → 'Mantener siempre en este equipo'\n"
+                "• O pulsa '🔍 Nube vs Local' para ver el estado de cada archivo y descargarlo con un clic."
+            )
+            empty_lbl.setStyleSheet("color: #64748b; font-size: 11px; padding: 4px; line-height: 140%;")
+            empty_lbl.setWordWrap(True)
             self.session_layout.addWidget(empty_lbl)
 
     def update_cache_gauge(self):

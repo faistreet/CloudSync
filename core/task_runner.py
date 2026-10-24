@@ -7,17 +7,29 @@ class TaskSignals(QObject):
     finished = Signal(dict)
 
 
+_active_runners = set()
+
+
 def run_async_task(task_func, args=(), on_progress=None, on_finished=None):
     """
     Runs a task in a Python daemon thread and safely emits Qt signals to the GUI.
-    Unlike QThread, Python daemon threads NEVER trigger 'QThread: Destroyed while thread is still running'
-    core dumps when dialogs or windows are closed.
+    Maintains a strong reference to TaskSignals in _active_runners to prevent premature
+    garbage collection during cross-thread signal emission.
     """
     signals = TaskSignals()
+    _active_runners.add(signals)
+
     if on_progress:
         signals.progress.connect(on_progress)
-    if on_finished:
-        signals.finished.connect(on_finished)
+
+    def on_task_finished(res):
+        try:
+            if on_finished:
+                on_finished(res)
+        finally:
+            _active_runners.discard(signals)
+
+    signals.finished.connect(on_task_finished)
 
     def worker():
         try:

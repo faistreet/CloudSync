@@ -47,11 +47,10 @@ class RcloneRCClient:
 
     def call(self, endpoint, params=None):
         url = f"{self.base_url}/{endpoint}"
-        data = None
+        payload = params if params is not None else {}
+        data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        if params is not None:
-            data = json.dumps(params).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers)
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=3) as resp:
                 return json.loads(resp.read().decode("utf-8"))
@@ -61,15 +60,19 @@ class RcloneRCClient:
     def get_stats(self):
         return self.call("core/stats")
 
-    def get_quota(self):
-        # queries storage about
-        return self.call("operations/about")
+    def get_vfs_stats(self, remote_name=""):
+        params = {"fs": f"{remote_name}:"} if remote_name else {}
+        return self.call("vfs/stats", params)
+
+    def get_quota(self, remote_name=""):
+        params = {"fs": f"{remote_name}:"} if remote_name else {}
+        return self.call("operations/about", params)
 
     def set_bandwidth_limit(self, rate="off"):
-        return self.call("core/bandwidth-limit", {"rate": rate})
+        return self.call("core/bwlimit", {"rate": rate})
 
     def refresh_vfs(self, dir_path=""):
-        params = {"recursive": True}
+        params = {"recursive": "true"}
         if dir_path:
             params["dir"] = dir_path
         return self.call("vfs/refresh", params)
@@ -92,7 +95,9 @@ class MountProcess:
         self.rc = RcloneRCClient(rc_port)
         self.is_paused = False
         self.last_stats = {}
+        self.last_vfs_stats = {}
         self.last_quota = {}
+        self.active_transfers_map = {}
         self.log_file = Path.home() / ".config" / "cloudsync" / f"rclone_{account_id}.log"
 
     def start(self):
@@ -115,6 +120,8 @@ class MountProcess:
             "--vfs-cache-mode", "full",
             "--vfs-cache-max-size", cache_max_size,
             "--vfs-cache-max-age", cache_max_age,
+            "--vfs-write-back", "2s",
+            "--vfs-cache-poll-interval", "5s",
             "--vfs-read-chunk-size", "16M",
             "--vfs-read-chunk-size-limit", "512M",
             "--buffer-size", "32M",
@@ -164,6 +171,8 @@ class MountProcess:
         unmount_path(self.mount_path)
 
     def is_alive(self):
+        if self.process and self.process.poll() is None:
+            return True
         return is_mountpoint(self.mount_path)
 
     def pause(self):
@@ -180,16 +189,51 @@ class MountProcess:
         stats = self.rc.get_stats()
         if stats:
             self.last_stats = stats
-        # Quota check periodically
-        if not self.last_quota or time.time() % 60 < 2:
-            quota = self.rc.get_quota()
+        vfs_stats = self.rc.get_vfs_stats(self.remote_name)
+        if vfs_stats:
+            self.last_vfs_stats = vfs_stats
+        # Quota check every 60 seconds
+        if time.time() - getattr(self, "last_quota_time", 0) > 60:
+            quota = self.rc.get_quota(self.remote_name)
+            self.last_quota_time = time.time()
             if quota:
                 self.last_quota = quota
+
+        newly_completed = []
+        if stats:
+            current_names = set()
+            transferring = stats.get("transferring", [])
+            disk_cache = self.last_vfs_stats.get("diskCache", {})
+            uploads_active = (disk_cache.get("uploadsInProgress", 0) > 0 or 
+                              disk_cache.get("uploadsQueued", 0) > 0)
+
+            for t in transferring:
+                t_name = t.get("name")
+                if t_name:
+                    current_names.add(t_name)
+                    t["direction"] = "up" if uploads_active else "down"
+                    self.active_transfers_map[t_name] = t
+
+            finished_names = [n for n in self.active_transfers_map if n not in current_names]
+            for n in finished_names:
+                prev = self.active_transfers_map.pop(n)
+                full_path = str(self.mount_path / n)
+                newly_completed.append({
+                    "account": self.account_id,
+                    "name": Path(n).name,
+                    "rel_path": n,
+                    "path": full_path,
+                    "size": prev.get("size", 0),
+                    "speed": prev.get("speed", 0) or prev.get("speedAvg", 0) or 0,
+                    "direction": prev.get("direction", "down")
+                })
+        return newly_completed
 
 
 class SyncEngine(QObject):
     stats_updated = Signal(dict)
     account_status_changed = Signal(str, str) # account_id, status
+    transfer_completed = Signal(dict) # completed transfer dict
 
     def __init__(self, config_manager):
         super().__init__()
@@ -277,6 +321,8 @@ class SyncEngine(QObject):
         while self._running:
             combined = {
                 "total_speed": 0,
+                "download_speed": 0,
+                "upload_speed": 0,
                 "total_bytes": 0,
                 "active_transfers": [],
                 "accounts": {},
@@ -289,33 +335,64 @@ class SyncEngine(QObject):
                     print(f"[SyncEngine] Mount {acc_id} appears dead, attempting restart...")
                     mp.start()
 
-                mp.update_metrics()
+                completed_list = mp.update_metrics()
+                for comp in completed_list:
+                    self.transfer_completed.emit(comp)
+
                 stats = mp.last_stats
+                vfs_stats = mp.last_vfs_stats
                 speed = stats.get("speed", 0) or 0
                 bytes_done = stats.get("bytes", 0) or 0
                 combined["total_speed"] += speed
                 combined["total_bytes"] += bytes_done
 
+                disk_cache = vfs_stats.get("diskCache", {})
+                uploads_active = (disk_cache.get("uploadsInProgress", 0) > 0 or 
+                                  disk_cache.get("uploadsQueued", 0) > 0)
+
                 transferring = stats.get("transferring", [])
+                acc_down_speed = 0
+                acc_up_speed = 0
+
                 if transferring:
                     for t in transferring:
+                        t_speed = t.get("speed", 0) or 0
+                        t_dir = t.get("direction", "up" if uploads_active else "down")
+                        if t_dir == "up":
+                            acc_up_speed += t_speed
+                        else:
+                            acc_down_speed += t_speed
+
                         combined["active_transfers"].append({
                             "account": acc_id,
                             "name": t.get("name", ""),
                             "size": t.get("size", 0),
                             "bytes": t.get("bytes", 0),
                             "percentage": t.get("percentage", 0),
-                            "speed": t.get("speed", 0)
+                            "speed": t_speed,
+                            "direction": t_dir
                         })
+
+                if speed > 0:
+                    if uploads_active and acc_up_speed == 0:
+                        acc_up_speed = speed
+                    elif not uploads_active and acc_down_speed == 0:
+                        acc_down_speed = speed
+
+                combined["download_speed"] += acc_down_speed
+                combined["upload_speed"] += acc_up_speed
 
                 combined["accounts"][acc_id] = {
                     "alive": mp.is_alive(),
                     "paused": mp.is_paused,
                     "mount_path": str(mp.mount_path),
                     "speed": speed,
+                    "download_speed": acc_down_speed,
+                    "upload_speed": acc_up_speed,
                     "bytes": bytes_done,
-                    "quota": mp.last_quota
+                    "quota": mp.last_quota,
+                    "uploads_active": uploads_active
                 }
 
             self.stats_updated.emit(combined)
-            time.sleep(1.5)
+            time.sleep(1.0)

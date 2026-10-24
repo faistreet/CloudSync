@@ -34,6 +34,16 @@ class CloudSyncIPCServer(QObject):
         if not client:
             return
 
+        if not hasattr(self, "_active_clients"):
+            self._active_clients = []
+        self._active_clients.append(client)
+
+        def cleanup():
+            if client in self._active_clients:
+                self._active_clients.remove(client)
+
+        client.disconnected.connect(cleanup)
+
         def read_data():
             raw = client.readAll().data().decode("utf-8")
             if raw:
@@ -45,6 +55,8 @@ class CloudSyncIPCServer(QObject):
             client.disconnectFromServer()
 
         client.readyRead.connect(read_data)
+        if client.bytesAvailable() > 0:
+            read_data()
 
 
 def send_ipc_command(action, paths):
