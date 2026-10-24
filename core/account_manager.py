@@ -24,7 +24,7 @@ class AccountManager:
             print(f"[AccountManager] Error reading rclone config: {e}")
         return {}
 
-    def fetch_account_identity(self, remote_name, remote_type):
+    def fetch_account_identity(self, remote_name, remote_type, allow_retry=True):
         """Fetches the user email and display name for Google Drive or OneDrive"""
         clean_name = remote_name.rstrip(":")
         remotes = self.get_all_rclone_remotes()
@@ -52,17 +52,45 @@ class AccountManager:
                     return email, name
 
             elif remote_type == "drive":
-                req = urllib.request.Request(
-                    "https://www.googleapis.com/drive/v3/about?fields=user(displayName,emailAddress)",
-                    headers={"Authorization": f"Bearer {access_token}"}
-                )
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    body = json.loads(resp.read().decode("utf-8"))
-                    user = body.get("user", {})
-                    email = user.get("emailAddress")
-                    name = user.get("displayName")
-                    return email, name
+                # Google Drive API v3: /about often hits 403 quota limits with shared rclone client_id.
+                # Querying /files with fields=files(owners) reliably retrieves the owner email and displayName.
+                email, name = None, None
+                try:
+                    req = urllib.request.Request(
+                        "https://www.googleapis.com/drive/v3/files?pageSize=1&fields=files(owners)",
+                        headers={"Authorization": f"Bearer {access_token}"}
+                    )
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        body = json.loads(resp.read().decode("utf-8"))
+                        files = body.get("files", [])
+                        if files:
+                            owners = files[0].get("owners", [])
+                            if owners:
+                                email = owners[0].get("emailAddress")
+                                name = owners[0].get("displayName")
+                except Exception as e_files:
+                    print(f"[AccountManager] files endpoint fallback: {e_files}")
 
+                if not email:
+                    # Fallback to /about endpoint
+                    req = urllib.request.Request(
+                        "https://www.googleapis.com/drive/v3/about?fields=user(displayName,emailAddress)",
+                        headers={"Authorization": f"Bearer {access_token}"}
+                    )
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        body = json.loads(resp.read().decode("utf-8"))
+                        user = body.get("user", {})
+                        email = user.get("emailAddress")
+                        name = user.get("displayName")
+                return email, name
+
+        except urllib.error.HTTPError as e:
+            # If 401 Unauthorized or 403 Forbidden, token might need refresh via rclone
+            if allow_retry and e.code in (401, 403):
+                print(f"[AccountManager] Token expired or rejected ({e.code}) for {remote_name}. Intentando refrescar...")
+                subprocess.run(["rclone", "lsd", f"{clean_name}:", "--max-depth", "1"], capture_output=True, timeout=10)
+                return self.fetch_account_identity(remote_name, remote_type, allow_retry=False)
+            print(f"[AccountManager] Error fetching identity for {remote_name}: {e}")
         except Exception as e:
             print(f"[AccountManager] Error fetching identity for {remote_name}: {e}")
         return None, None
