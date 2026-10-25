@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "cloudsync" / "config.json"
@@ -22,34 +23,44 @@ DEFAULT_SETTINGS = {
 class ConfigManager:
     def __init__(self, config_path=None):
         self.config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+        self._lock = threading.Lock()
         self.data = {}
         self.load()
 
     def load(self):
-        if self.config_path.exists():
-            try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    self.data = json.load(f)
-            except Exception as e:
-                print(f"[Config] Error loading config: {e}. Using defaults.")
+        with self._lock:
+            if self.config_path.exists():
+                try:
+                    with open(self.config_path, "r", encoding="utf-8") as f:
+                        self.data = json.load(f)
+                except Exception as e:
+                    print(f"[Config] Error loading config: {e}. Using defaults.")
+                    self.data = dict(DEFAULT_SETTINGS)
+            else:
                 self.data = dict(DEFAULT_SETTINGS)
-        else:
-            self.data = dict(DEFAULT_SETTINGS)
-            self.save()
+                self._save_unlocked()
 
-        # Fill any missing keys from defaults
-        updated = False
-        for k, v in DEFAULT_SETTINGS.items():
-            if k not in self.data:
-                self.data[k] = v
-                updated = True
-        if updated:
-            self.save()
+            # Fill any missing keys from defaults
+            updated = False
+            for k, v in DEFAULT_SETTINGS.items():
+                if k not in self.data:
+                    self.data[k] = v
+                    updated = True
+            if updated:
+                self._save_unlocked()
+
+    def _save_unlocked(self):
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.config_path.with_suffix(".json.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, self.config_path)
 
     def save(self):
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=4, ensure_ascii=False)
+        with self._lock:
+            self._save_unlocked()
 
     def get(self, key, default=None):
         return self.data.get(key, default)

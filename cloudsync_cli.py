@@ -26,14 +26,14 @@ def clean_dolphin_url(url_or_path):
 
 def main():
     if len(sys.argv) < 2:
-        print("Uso: cloudsync_cli.py [pin|free|status|inspect] [rutas...]")
+        print("Uso: cloudsync_cli.py [pin|free|status|inspect|transfer] [rutas...]")
         sys.exit(1)
 
     action = sys.argv[1].lower()
     targets = [clean_dolphin_url(arg) for arg in sys.argv[2:]] if len(sys.argv) > 2 else []
 
     # First, try to send to running CloudSync application via IPC
-    if action in ("pin", "free", "inspect") and targets:
+    if action in ("pin", "free", "inspect", "transfer") and targets:
         if send_ipc_command(action, targets):
             print(f"[CloudSync] Comando '{action}' enviado a la instancia en ejecución.")
             sys.exit(0)

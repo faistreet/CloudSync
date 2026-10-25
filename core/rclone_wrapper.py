@@ -3,11 +3,22 @@ import sys
 import json
 import time
 import shutil
+import socket
 import urllib.request
 import urllib.error
 import subprocess
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal
+
+
+def find_free_port(preferred_port=5575):
+    port = preferred_port
+    for _ in range(50):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+        port += 1
+    return preferred_port
 
 
 def is_mountpoint(path):
@@ -110,6 +121,9 @@ class MountProcess:
 
         self.mount_path.mkdir(parents=True, exist_ok=True)
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        self.rc_port = find_free_port(self.rc_port)
+        self.rc = RcloneRCClient(self.rc_port)
 
         cache_dir = self.config_manager.cache_dir
         cache_max_size = self.config_manager.cache_max_size
@@ -320,6 +334,7 @@ class SyncEngine(QObject):
                 "download_speed": 0,
                 "upload_speed": 0,
                 "total_bytes": 0,
+                "cache_bytes_used": 0,
                 "uploads_in_progress": 0,
                 "uploads_queued": 0,
                 "active_transfers": [],
@@ -345,6 +360,7 @@ class SyncEngine(QObject):
                 combined["total_bytes"] += bytes_done
 
                 disk_cache = vfs_stats.get("diskCache", {})
+                combined["cache_bytes_used"] += disk_cache.get("bytesUsed", 0)
                 up_in_prog = disk_cache.get("uploadsInProgress", 0)
                 up_queued = disk_cache.get("uploadsQueued", 0)
                 combined["uploads_in_progress"] += up_in_prog

@@ -16,6 +16,7 @@ from core.task_runner import run_async_task
 class FileInspectorDialog(QDialog):
     action_requested = Signal(str, str) # action, path
     file_action_triggered = Signal(str, str) # backwards compatibility
+    transfer_requested = Signal(str) # source path to transfer
 
     def __init__(self, config_manager, vfs_controller, initial_folder=None, parent=None):
         super().__init__(parent)
@@ -53,6 +54,12 @@ class FileInspectorDialog(QDialog):
         self.up_btn.setObjectName("secondaryBtn")
         self.up_btn.clicked.connect(self.navigate_up)
         top_bar.addWidget(self.up_btn)
+
+        self.transfer_btn = QPushButton("🔄 Pasar a otra nube")
+        self.transfer_btn.setObjectName("secondaryBtn")
+        self.transfer_btn.setToolTip("Transferir el elemento seleccionado (o la carpeta actual) hacia otra nube")
+        self.transfer_btn.clicked.connect(self.on_transfer_clicked)
+        top_bar.addWidget(self.transfer_btn)
 
         self.refresh_btn = QPushButton("🔄 Actualizar")
         self.refresh_btn.setObjectName("secondaryBtn")
@@ -173,13 +180,26 @@ class FileInspectorDialog(QDialog):
     def load_folder(self, folder_path):
         self.current_folder = Path(folder_path).resolve()
         self.path_label.setText(str(self.current_folder))
-        
+        self.path_label.setToolTip(str(self.current_folder))
+
         # Check if root of account to enable/disable Up button
         acc_root = Path(self.account_combo.currentData()).resolve() if self.account_combo.currentData() else None
         self.up_btn.setEnabled(acc_root is not None and self.current_folder != acc_root)
 
-        self.all_items = self.vfs_controller.inspect_folder(self.current_folder)
-        self.apply_filters()
+        self.summary_label.setText("Cargando contenido de la carpeta...")
+        target_dir = self.current_folder
+
+        def on_loaded(res):
+            if self.current_folder != target_dir:
+                return
+            self.all_items = res.get("result", []) if res.get("success") else []
+            self.apply_filters()
+
+        run_async_task(
+            self.vfs_controller.inspect_folder,
+            args=(target_dir,),
+            on_finished=on_loaded
+        )
 
     def apply_filters(self):
         search_query = self.search_input.text().strip().lower()
@@ -262,28 +282,24 @@ class FileInspectorDialog(QDialog):
             # Column 3: Action Button
             if item["is_dir"]:
                 btn = QPushButton("📥 Descargar todo")
-                btn.setObjectName("secondaryBtn")
+                btn.setObjectName("tableBtn")
                 btn.clicked.connect(lambda _, p=item["path"]: self.trigger_action("pin", p))
-                btn.setStyleSheet("padding: 2px 10px; font-size: 11px;")
                 self.table.setCellWidget(row, 3, btn)
             elif item["status"] == "uploading":
                 btn = QPushButton("⏳ Sincronizando...")
-                btn.setObjectName("secondaryBtn")
+                btn.setObjectName("tableBtn")
                 btn.setEnabled(False)
                 btn.setToolTip("Este archivo aún se está subiendo a la nube. Se podrá liberar espacio cuando termine.")
-                btn.setStyleSheet("padding: 2px 10px; font-size: 11px; color: #fbbf24;")
                 self.table.setCellWidget(row, 3, btn)
             elif item["status"] == "local":
                 btn = QPushButton("🗑️ Liberar espacio")
-                btn.setObjectName("secondaryBtn")
+                btn.setObjectName("tableBtn")
                 btn.clicked.connect(lambda _, p=item["path"]: self.trigger_action("free", p))
-                btn.setStyleSheet("padding: 2px 10px; font-size: 11px;")
                 self.table.setCellWidget(row, 3, btn)
             else:
                 btn = QPushButton("📥 Descargar")
-                btn.setObjectName("secondaryBtn")
+                btn.setObjectName("tableBtn")
                 btn.clicked.connect(lambda _, p=item["path"]: self.trigger_action("pin", p))
-                btn.setStyleSheet("padding: 2px 10px; font-size: 11px;")
                 self.table.setCellWidget(row, 3, btn)
 
     def on_cell_double_clicked(self, row, col):
@@ -304,6 +320,20 @@ class FileInspectorDialog(QDialog):
     def refresh_current_folder(self):
         if self.current_folder:
             self.load_folder(self.current_folder)
+
+    def on_transfer_clicked(self):
+        row = self.table.currentRow()
+        if row >= 0:
+            item_cell = self.table.item(row, 0)
+            if item_cell:
+                item_data = item_cell.data(Qt.UserRole)
+                if item_data and item_data.get("path"):
+                    self.transfer_requested.emit(item_data["path"])
+                    return
+        if self.current_folder:
+            self.transfer_requested.emit(str(self.current_folder))
+        else:
+            self.transfer_requested.emit("")
 
     def trigger_action(self, action, target_path):
         fname = os.path.basename(target_path)

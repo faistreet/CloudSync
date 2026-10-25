@@ -52,16 +52,17 @@ QFrame#headerFrame {
     border-bottom: 1px solid #334155;
 }
 
-/* Buttons */
+/* Buttons - Standardized uniform height & sizing */
 QPushButton {
     background-color: #273549;
     border: 1px solid #475569;
     color: #ffffff;
     border-radius: 7px;
     min-height: 32px;
-    padding: 4px 16px;
+    max-height: 34px;
+    padding: 4px 12px;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 12px;
 }
 QPushButton:hover {
     background-color: #334155;
@@ -72,15 +73,22 @@ QPushButton:pressed {
     background-color: #0f172a;
     border-color: #0284c7;
 }
+QPushButton:disabled {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #64748b;
+}
 
 QPushButton#primaryBtn {
     background-color: #0284c7;
     border: 1px solid #38bdf8;
     color: #ffffff;
+    border-radius: 7px;
     font-weight: bold;
-    min-height: 36px;
-    padding: 6px 20px;
-    font-size: 13px;
+    min-height: 32px;
+    max-height: 34px;
+    padding: 4px 14px;
+    font-size: 12px;
 }
 QPushButton#primaryBtn:hover {
     background-color: #0369a1;
@@ -90,14 +98,20 @@ QPushButton#primaryBtn:hover {
 QPushButton#primaryBtn:pressed {
     background-color: #075985;
 }
+QPushButton#primaryBtn:disabled {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #64748b;
+}
 
 QPushButton#secondaryBtn {
     background-color: #334155;
     border: 1px solid #475569;
     color: #ffffff;
-    border-radius: 6px;
-    min-height: 30px;
-    padding: 4px 14px;
+    border-radius: 7px;
+    min-height: 32px;
+    max-height: 34px;
+    padding: 4px 12px;
     font-size: 12px;
     font-weight: 600;
 }
@@ -109,16 +123,51 @@ QPushButton#secondaryBtn:hover {
 QPushButton#secondaryBtn:pressed {
     background-color: #1e293b;
 }
+QPushButton#secondaryBtn:disabled {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #64748b;
+}
 
 QPushButton#dangerBtn {
     background-color: #7f1d1d;
     border: 1px solid #ef4444;
     color: #ffffff;
+    border-radius: 7px;
     font-weight: 600;
     min-height: 32px;
+    max-height: 34px;
+    padding: 4px 12px;
+    font-size: 12px;
 }
 QPushButton#dangerBtn:hover {
     background-color: #991b1b;
+}
+QPushButton#dangerBtn:disabled {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #64748b;
+}
+
+QPushButton#tableBtn {
+    background-color: #334155;
+    border: 1px solid #475569;
+    color: #ffffff;
+    border-radius: 5px;
+    min-height: 24px;
+    max-height: 26px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+QPushButton#tableBtn:hover {
+    background-color: #475569;
+    border-color: #38bdf8;
+}
+QPushButton#tableBtn:disabled {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #fbbf24;
 }
 
 QPushButton#iconBtn {

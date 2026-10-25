@@ -16,6 +16,7 @@ from core.config import ConfigManager
 from core.rclone_wrapper import SyncEngine
 from core.account_manager import AccountManager
 from core.vfs_controller import VFSController
+from core.cloud_transfer import CloudTransferManager
 from core.notifications import NotificationManager
 from core.ipc import CloudSyncIPCServer
 from gui.tray_icon import CloudSyncTray
@@ -23,6 +24,7 @@ from gui.popup_window import PopupWindow, format_bytes
 from gui.account_dialog import AccountWizardDialog
 from gui.settings_dialog import SettingsDialog
 from gui.file_inspector_dialog import FileInspectorDialog
+from gui.cloud_transfer_dialog import CloudTransferDialog
 from gui.styles import MODERN_QSS
 from core.task_runner import run_async_task
 
@@ -43,6 +45,7 @@ class CloudSyncApp:
 
         self.sync_engine = SyncEngine(self.config_manager)
         self.vfs_controller = VFSController(self.config_manager, self.sync_engine)
+        self.transfer_manager = CloudTransferManager(self.config_manager, self.sync_engine)
 
         # Setup GUI Components
         self.tray = CloudSyncTray()
@@ -51,6 +54,7 @@ class CloudSyncApp:
         self.settings_dlg = None
         self.account_dlg = None
         self.inspector_dlg = None
+        self.transfer_dlg = None
         self.active_workers = []
 
         # Setup IPC Server for real-time Dolphin communication
@@ -76,6 +80,7 @@ class CloudSyncApp:
         self.popup.open_settings_requested.connect(self.open_settings)
         self.popup.add_account_requested.connect(self.open_add_account)
         self.popup.open_inspector_requested.connect(self.open_inspector)
+        self.popup.open_transfer_requested.connect(self.open_transfer_dialog)
 
         # SyncEngine signals
         self.sync_engine.stats_updated.connect(self.on_stats_updated)
@@ -158,9 +163,24 @@ class CloudSyncApp:
         self.inspector_dlg = FileInspectorDialog(self.config_manager, self.vfs_controller, target_path)
         self.inspector_dlg.action_requested.connect(self.execute_file_action)
         self.inspector_dlg.file_action_triggered.connect(self.on_inspector_action)
+        self.inspector_dlg.transfer_requested.connect(self.open_transfer_dialog)
         self.inspector_dlg.show()
         self.inspector_dlg.raise_()
         self.inspector_dlg.activateWindow()
+
+    def open_transfer_dialog(self, initial_src_path=""):
+        if self.transfer_dlg and self.transfer_dlg.isVisible() and self.transfer_manager.is_running():
+            self.transfer_dlg.raise_()
+            self.transfer_dlg.activateWindow()
+            return
+        self.transfer_dlg = CloudTransferDialog(
+            self.config_manager,
+            self.transfer_manager,
+            initial_src_path=initial_src_path if initial_src_path else None
+        )
+        self.transfer_dlg.show()
+        self.transfer_dlg.raise_()
+        self.transfer_dlg.activateWindow()
 
     def on_inspector_action(self, action, target_path):
         self.popup.update_cache_gauge()
@@ -184,6 +204,10 @@ class CloudSyncApp:
 
         if action == "inspect" and paths:
             self.open_inspector(paths[0])
+            return
+
+        if action == "transfer" and paths:
+            self.open_transfer_dialog(paths[0])
             return
 
         for target in paths:

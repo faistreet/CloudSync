@@ -6,10 +6,19 @@ from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPoint
 from PySide6.QtGui import QIcon, QPixmap, QDesktopServices, QMouseEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QProgressBar, QMessageBox
+    QScrollArea, QFrame, QProgressBar, QMessageBox, QSizePolicy
 )
 
 from gui.styles import MODERN_QSS
+from core.task_runner import run_async_task
+
+
+def elide_text(text, max_len=36):
+    s = str(text or "")
+    if len(s) <= max_len:
+        return s
+    keep = (max_len - 3) // 2
+    return f"{s[:keep]}...{s[-keep:]}"
 
 
 def format_bytes(num_bytes):
@@ -83,27 +92,31 @@ class AccountCard(QFrame):
         top_row.addWidget(self.status_pill)
         layout.addLayout(top_row)
 
-        # Action buttons row
+        # Action buttons row (uniform equal widths & responsive)
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self.open_btn = QPushButton("Abrir en Dolphin")
+        self.open_btn = QPushButton("📂 Dolphin")
         self.open_btn.setObjectName("secondaryBtn")
+        self.open_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.open_btn.setToolTip("Abrir carpeta sincronizada en el explorador Dolphin")
         self.open_btn.clicked.connect(lambda: self.open_folder_clicked.emit(self.account_id))
-        btn_row.addWidget(self.open_btn)
+        btn_row.addWidget(self.open_btn, stretch=1)
 
         self.inspect_btn = QPushButton("🔍 Nube vs Local")
         self.inspect_btn.setObjectName("secondaryBtn")
+        self.inspect_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.inspect_btn.setToolTip("Ver qué archivos están descargados y cuáles en la nube")
         self.inspect_btn.clicked.connect(lambda: self.inspect_clicked.emit(self.account_id))
-        btn_row.addWidget(self.inspect_btn)
+        btn_row.addWidget(self.inspect_btn, stretch=1)
 
-        self.refresh_btn = QPushButton("Sincronizar")
+        self.refresh_btn = QPushButton("🔄 Sincronizar")
         self.refresh_btn.setObjectName("secondaryBtn")
+        self.refresh_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.refresh_btn.setToolTip("Refrescar cambios desde la nube")
         self.refresh_btn.clicked.connect(lambda: self.refresh_clicked.emit(self.account_id))
-        btn_row.addWidget(self.refresh_btn)
+        btn_row.addWidget(self.refresh_btn, stretch=1)
 
-        btn_row.addStretch()
         layout.addLayout(btn_row)
 
     def set_status(self, is_alive, is_paused):
@@ -123,6 +136,7 @@ class PopupWindow(QWidget):
     open_settings_requested = Signal()
     add_account_requested = Signal()
     open_inspector_requested = Signal(str)
+    open_transfer_requested = Signal(str)
 
     def __init__(self, config_manager, sync_engine, vfs_controller, parent=None):
         super().__init__(parent)
@@ -299,17 +313,19 @@ class PopupWindow(QWidget):
         cache_layout.addWidget(self.cache_progress)
 
         cache_btn_row = QHBoxLayout()
-        self.free_all_btn = QPushButton("Liberar toda la caché")
+        cache_btn_row.setSpacing(8)
+        self.free_all_btn = QPushButton("🗑️ Liberar caché")
         self.free_all_btn.setObjectName("secondaryBtn")
+        self.free_all_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.free_all_btn.clicked.connect(self.free_all_cache)
-        cache_btn_row.addWidget(self.free_all_btn)
+        cache_btn_row.addWidget(self.free_all_btn, stretch=1)
 
-        inspect_all_btn = QPushButton("🔍 Explorador Nube vs Local")
+        inspect_all_btn = QPushButton("🔍 Nube vs Local")
         inspect_all_btn.setObjectName("secondaryBtn")
+        inspect_all_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         inspect_all_btn.clicked.connect(lambda: self.open_inspector_requested.emit(""))
-        cache_btn_row.addWidget(inspect_all_btn)
+        cache_btn_row.addWidget(inspect_all_btn, stretch=1)
 
-        cache_btn_row.addStretch()
         cache_layout.addLayout(cache_btn_row)
 
         self.body_layout.addWidget(cache_frame)
@@ -318,28 +334,37 @@ class PopupWindow(QWidget):
         scroll.setWidget(scroll_widget)
         root_layout.addWidget(scroll)
 
-        # 3. Footer Bar
+        # 3. Footer Bar (Uniform equal-width responsive buttons)
         footer = QFrame()
         footer.setStyleSheet("background-color: #0b1120; border-top: 1px solid #1e293b;")
         footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(20, 14, 20, 14)
-        footer_layout.setSpacing(12)
+        footer_layout.setContentsMargins(16, 12, 16, 12)
+        footer_layout.setSpacing(8)
 
-        add_acc_btn = QPushButton("+ Añadir cuenta")
+        add_acc_btn = QPushButton("+ Cuenta")
         add_acc_btn.setObjectName("primaryBtn")
+        add_acc_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        add_acc_btn.setToolTip("Vincular una nueva cuenta de Google Drive o OneDrive")
         add_acc_btn.clicked.connect(self.add_account_requested.emit)
-        footer_layout.addWidget(add_acc_btn)
+        footer_layout.addWidget(add_acc_btn, stretch=1)
 
-        open_root_btn = QPushButton("Abrir carpeta raíz")
+        transfer_btn = QPushButton("🔄 Entre Nubes")
+        transfer_btn.setObjectName("secondaryBtn")
+        transfer_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        transfer_btn.setToolTip("Copiar o mover archivos/carpetas de una nube a otra sin usar el disco duro")
+        transfer_btn.clicked.connect(lambda: self.open_transfer_requested.emit(""))
+        footer_layout.addWidget(transfer_btn, stretch=1)
+
+        open_root_btn = QPushButton("📂 Carpeta raíz")
+        open_root_btn.setObjectName("secondaryBtn")
+        open_root_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        open_root_btn.setToolTip("Abrir la carpeta principal de CloudSync en Dolphin")
         open_root_btn.clicked.connect(self.open_root_folder)
-        footer_layout.addWidget(open_root_btn)
+        footer_layout.addWidget(open_root_btn, stretch=1)
 
         root_layout.addWidget(footer)
 
-        # Timer to update cache size occasionally
-        self.cache_timer = QTimer(self)
-        self.cache_timer.timeout.connect(self.update_cache_gauge)
-        self.cache_timer.start(8000)
+        # Initial async cache calculation (subsequent updates come from rclone in-memory stats)
         self.update_cache_gauge()
 
     def update_accounts_view(self):
@@ -433,7 +458,9 @@ class PopupWindow(QWidget):
                 t_box.setSpacing(4)
                 t_dir = t.get("direction", "down")
                 dir_icon = "📤 Subiendo:" if t_dir == "up" else "📥 Descargando:"
-                t_lbl = QLabel(f"{dir_icon} {t['name']} ({format_bytes(t['bytes'])} / {format_bytes(t['size'])})")
+                short_name = elide_text(Path(t.get("name", "")).name, 34)
+                t_lbl = QLabel(f"{dir_icon} {short_name} ({format_bytes(t['bytes'])} / {format_bytes(t['size'])})")
+                t_lbl.setToolTip(t.get("name", ""))
                 t_lbl.setStyleSheet("color: #cbd5e1; font-size: 12px;")
                 pbar = QProgressBar()
                 pbar.setValue(int(t.get("percentage", 0)))
@@ -445,7 +472,8 @@ class PopupWindow(QWidget):
         elif self.active_hydration:
             t_box = QVBoxLayout()
             t_box.setSpacing(4)
-            f_name = self.active_hydration.get("file_name", "Descargando...")
+            raw_name = self.active_hydration.get("file_name", "Descargando...")
+            f_name = elide_text(raw_name, 34)
             f_bytes = self.active_hydration.get("file_bytes", 0)
             f_total = self.active_hydration.get("file_total", 0)
             f_idx = self.active_hydration.get("file_index")
@@ -453,6 +481,7 @@ class PopupWindow(QWidget):
             idx_str = f" ({f_idx}/{f_count})" if f_idx and f_count and f_count > 1 else ""
             pct = int((f_bytes / f_total) * 100) if f_total > 0 else 0
             t_lbl = QLabel(f"📥 Descargando: {f_name}{idx_str} ({format_bytes(f_bytes)} / {format_bytes(f_total)})")
+            t_lbl.setToolTip(raw_name)
             t_lbl.setStyleSheet("color: #cbd5e1; font-size: 12px;")
             pbar = QProgressBar()
             pbar.setValue(pct)
@@ -465,6 +494,10 @@ class PopupWindow(QWidget):
             idle_lbl = QLabel("✓ Todos los archivos sincronizados")
             idle_lbl.setStyleSheet("color: #10b981; font-size: 12px; padding: 4px 0;")
             self.transfers_layout.addWidget(idle_lbl)
+
+        # Update cache gauge from rclone in-memory stats (zero disk I/O)
+        if "cache_bytes_used" in stats and stats["cache_bytes_used"] > 0:
+            self._render_cache_gauge(stats["cache_bytes_used"])
 
     def set_active_hydration(self, hydration_data):
         """Called when a file is actively being downloaded via 'Mantener en este equipo'"""
@@ -532,7 +565,9 @@ class PopupWindow(QWidget):
                 direction = item.get("direction", "down")
                 icon_str = "📥" if direction == "down" else "📤"
                 color_str = "#34d399" if direction == "down" else "#38bdf8"
-                lbl = QLabel(f"{icon_str} <b>{item['name']}</b> ({format_bytes(item['size'])})")
+                short_name = elide_text(item["name"], 28)
+                lbl = QLabel(f"{icon_str} <b>{short_name}</b> ({format_bytes(item['size'])})")
+                lbl.setToolTip(item["name"])
                 lbl.setStyleSheet(f"color: {color_str}; font-size: 12px;")
                 row.addWidget(lbl)
 
@@ -542,8 +577,7 @@ class PopupWindow(QWidget):
                 row.addWidget(time_lbl)
 
                 open_btn = QPushButton("Abrir")
-                open_btn.setObjectName("secondaryBtn")
-                open_btn.setStyleSheet("padding: 2px 8px; font-size: 11px; min-height: 22px;")
+                open_btn.setObjectName("tableBtn")
                 target_p = item.get("path")
                 open_btn.clicked.connect(lambda _, p=target_p: self.open_downloaded_item(p))
                 row.addWidget(open_btn)
@@ -561,9 +595,8 @@ class PopupWindow(QWidget):
             empty_lbl.setWordWrap(True)
             self.session_layout.addWidget(empty_lbl)
 
-    def update_cache_gauge(self):
+    def _render_cache_gauge(self, used_bytes):
         try:
-            used_bytes = self.vfs_controller.get_cache_disk_usage()
             max_size_str = self.config_manager.cache_max_size
             max_bytes = 50 * 1024 * 1024 * 1024
             if max_size_str.endswith("G"):
@@ -578,6 +611,12 @@ class PopupWindow(QWidget):
             )
         except Exception:
             pass
+
+    def update_cache_gauge(self):
+        run_async_task(
+            self.vfs_controller.get_cache_disk_usage,
+            on_finished=lambda res: self._render_cache_gauge(res.get("result", 0))
+        )
 
     def toggle_pause(self):
         if self.pause_btn.text() == "Pausar":

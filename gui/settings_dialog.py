@@ -4,7 +4,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFileDialog, QCheckBox, QComboBox, QMessageBox
+    QPushButton, QFileDialog, QCheckBox, QComboBox, QMessageBox,
+    QScrollArea, QWidget, QFrame
 )
 
 from gui.styles import MODERN_QSS
@@ -18,13 +19,26 @@ class SettingsDialog(QDialog):
         self.config_manager = config_manager
         self.setWindowTitle("Configuración - CloudSync")
         self.setStyleSheet(MODERN_QSS)
-        self.setFixedSize(540, 560)
+        self.resize(540, 560)
+        self.setMinimumSize(400, 420)
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(12)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("mainScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        content = QWidget()
+        content.setObjectName("scrollContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(14)
 
         title = QLabel("Configuración general de sincronización")
         title.setStyleSheet("font-size: 17px; font-weight: bold; color: #38bdf8;")
@@ -92,10 +106,12 @@ class SettingsDialog(QDialog):
         layout.addWidget(reinstall_btn)
 
         layout.addStretch()
+        scroll.setWidget(content)
+        root_layout.addWidget(scroll)
 
         # Bottom buttons
         btn_box = QHBoxLayout()
-        btn_box.setSpacing(12)
+        btn_box.setSpacing(10)
         btn_box.addStretch()
 
         cancel_btn = QPushButton("Cancelar")
@@ -107,7 +123,7 @@ class SettingsDialog(QDialog):
         save_btn.clicked.connect(self.save_settings)
         btn_box.addWidget(save_btn)
 
-        layout.addLayout(btn_box)
+        root_layout.addLayout(btn_box)
 
     def browse_base_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Seleccionar carpeta raíz de sincronización", self.base_dir_input.text())

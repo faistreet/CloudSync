@@ -47,7 +47,7 @@ Keywords=cloud;drive;onedrive;sync;google;files-on-demand;
     dolphin_desktop_content = f"""[Desktop Entry]
 Type=Service
 MimeType=all/allfiles;inode/directory;
-Actions=PinOffline;FreeSpace;InspectStatus;
+Actions=PinOffline;FreeSpace;InspectStatus;TransferCloud;
 X-KDE-Submenu=CloudSync
 X-KDE-Submenu[es]=CloudSync
 X-KDE-Priority=TopLevel
@@ -69,6 +69,12 @@ Name=Ver estado de archivos (Nube vs Local)
 Name[es]=Ver estado de archivos (Nube vs Local)
 Icon=cloud
 Exec={python_bin} "{cli_path}" inspect %F
+
+[Desktop Action TransferCloud]
+Name=Pasar a otra nube (Copiar / Mover sin usar disco)
+Name[es]=Pasar a otra nube (Copiar / Mover sin usar disco)
+Icon=folder-sync
+Exec={python_bin} "{cli_path}" transfer %F
 """
     with open(dolphin_desktop, "w", encoding="utf-8") as f:
         f.write(dolphin_desktop_content)

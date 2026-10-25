@@ -199,8 +199,20 @@ class AccountWizardDialog(QDialog):
             rtype = data.get("type", "desconocido")
             self.remote_combo.addItem(f"{name} ({rtype})", userData=(name, rtype))
 
+    def _get_unique_account_ids(self, base_acc_id, base_remote_name, desired_folder):
+        accounts = self.config_manager.get_accounts()
+        if base_acc_id not in accounts:
+            return base_acc_id, base_remote_name, desired_folder
+        idx = 2
+        while f"{base_acc_id}_{idx}" in accounts:
+            idx += 1
+        folder = desired_folder if desired_folder != base_acc_id else f"{desired_folder}_{idx}"
+        return f"{base_acc_id}_{idx}", f"{base_remote_name}_{idx}", folder
+
     def start_gdrive_auth(self):
-        remote_name = "cloudsync_gdrive"
+        desired_folder = self.gdrive_folder.text().strip() or "GoogleDrive"
+        acc_id, remote_name, folder = self._get_unique_account_ids("GoogleDrive", "cloudsync_gdrive", desired_folder)
+        self._pending_gdrive = (acc_id, remote_name, folder)
         self.status_box.setText("Abriendo navegador web para autorizar Google Drive... Esperando confirmación.")
         self.loading_bar.setVisible(True)
         self.gdrive_btn.setEnabled(False)
@@ -214,12 +226,14 @@ class AccountWizardDialog(QDialog):
         self.loading_bar.setVisible(False)
         self.gdrive_btn.setEnabled(True)
         if success:
-            acc_id = "GoogleDrive"
+            acc_id, remote_name, folder = getattr(
+                self, "_pending_gdrive", ("GoogleDrive", "cloudsync_gdrive", "GoogleDrive")
+            )
             self.config_manager.add_or_update_account(acc_id, {
-                "remote_name": "cloudsync_gdrive",
+                "remote_name": remote_name,
                 "type": "drive",
-                "display_name": self.gdrive_name.text().strip() or "Google Drive",
-                "mount_folder": self.gdrive_folder.text().strip() or "GoogleDrive",
+                "display_name": self.gdrive_name.text().strip() or acc_id,
+                "mount_folder": folder,
                 "enabled": True
             })
             QMessageBox.information(self, "Cuenta vinculada", "Google Drive ha sido vinculado y configurado correctamente.")
@@ -230,17 +244,17 @@ class AccountWizardDialog(QDialog):
             self.status_box.setText("Error en la autenticación.")
 
     def start_onedrive_auth(self):
-        remote_name = "cloudsync_onedrive"
+        desired_folder = self.onedrive_folder.text().strip() or "OneDrive"
+        acc_id, remote_name, folder = self._get_unique_account_ids("OneDrive", "cloudsync_onedrive", desired_folder)
 
         # Check if already authenticated and valid
         ok, _ = self.account_manager.test_remote_connection(remote_name)
         if ok:
-            acc_id = "OneDrive"
             self.config_manager.add_or_update_account(acc_id, {
                 "remote_name": remote_name,
                 "type": "onedrive",
-                "display_name": self.onedrive_name.text().strip() or "OneDrive",
-                "mount_folder": self.onedrive_folder.text().strip() or "OneDrive",
+                "display_name": self.onedrive_name.text().strip() or acc_id,
+                "mount_folder": folder,
                 "enabled": True
             })
             QMessageBox.information(
@@ -260,19 +274,18 @@ class AccountWizardDialog(QDialog):
                 self,
                 "Configuración de OneDrive en Konsole",
                 "Se ha abierto una terminal (Konsole).\n"
-                "Sigue las instrucciones en la pantalla para iniciar sesión en tu cuenta de Microsoft.\n\n"
+                f"Crea el remoto con el nombre '{remote_name}' e inicia sesión en tu cuenta de Microsoft.\n\n"
                 "Una vez terminada la configuración en la terminal, pulsa 'Aceptar' aquí.",
                 QMessageBox.Ok | QMessageBox.Cancel
             )
             if reply == QMessageBox.Ok:
                 ok, err = self.account_manager.test_remote_connection(remote_name)
                 if ok:
-                    acc_id = "OneDrive"
                     self.config_manager.add_or_update_account(acc_id, {
                         "remote_name": remote_name,
                         "type": "onedrive",
-                        "display_name": self.onedrive_name.text().strip() or "OneDrive",
-                        "mount_folder": self.onedrive_folder.text().strip() or "OneDrive",
+                        "display_name": self.onedrive_name.text().strip() or acc_id,
+                        "mount_folder": folder,
                         "enabled": True
                     })
                     QMessageBox.information(self, "Cuenta vinculada", "OneDrive ha sido configurado y vinculado exitosamente.")
