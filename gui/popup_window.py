@@ -408,11 +408,24 @@ class PopupWindow(QWidget):
             is_alive = acc_info.get("alive", False)
             card.set_status(is_alive, is_paused)
 
+        up_in_prog = stats.get("uploads_in_progress", 0)
+        up_queued = stats.get("uploads_queued", 0)
+
         # Active transfers widgets
         while self.transfers_layout.count():
             item = self.transfers_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+        if up_in_prog > 0 or up_queued > 0:
+            q_lbl = QLabel(
+                f"⏳ Cola de subida activa: {up_in_prog} subiendo, {up_queued} en espera (protegidos en caché)"
+            )
+            q_lbl.setStyleSheet(
+                "color: #fbbf24; font-size: 11px; font-weight: bold; background: #451a03; "
+                "padding: 4px 8px; border-radius: 6px; border: 1px solid #d97706;"
+            )
+            self.transfers_layout.addWidget(q_lbl)
 
         if active_transfers:
             for t in active_transfers[:4]:
@@ -448,7 +461,7 @@ class PopupWindow(QWidget):
             w = QWidget()
             w.setLayout(t_box)
             self.transfers_layout.addWidget(w)
-        else:
+        elif up_in_prog == 0 and up_queued == 0:
             idle_lbl = QLabel("✓ Todos los archivos sincronizados")
             idle_lbl.setStyleSheet("color: #10b981; font-size: 12px; padding: 4px 0;")
             self.transfers_layout.addWidget(idle_lbl)
@@ -591,21 +604,35 @@ class PopupWindow(QWidget):
         subprocess.Popen(["dolphin", root_dir])
 
     def free_all_cache(self):
+        pending = self.vfs_controller.count_pending_uploads()
+        extra_note = (
+            f"\n\nNota de seguridad: Se detectaron {pending} archivo(s) aún pendientes de subir a la nube; "
+            "estos archivos se protegerán automáticamente y NO serán eliminados."
+            if pending > 0 else ""
+        )
         reply = QMessageBox.question(
             self,
-            "Liberar toda la caché",
-            "¿Deseas liberar todos los archivos descargados localmente?\n"
-            "Tus archivos seguirán estando seguros en la nube y seguirás viéndolos en tu PC.",
+            "Liberar caché segura",
+            "¿Deseas liberar el espacio de todos los archivos ya sincronizados en la nube?"
+            f"{extra_note}",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            cache_dir = Path(self.config_manager.cache_dir)
-            if cache_dir.exists():
-                import shutil
-                shutil.rmtree(cache_dir, ignore_errors=True)
-                cache_dir.mkdir(parents=True, exist_ok=True)
-            for acc_id in self.config_manager.get_accounts():
-                self.sync_engine.refresh_account(acc_id)
+            res = self.vfs_controller.free_all_cache_safe()
             self.update_cache_gauge()
-            QMessageBox.information(self, "Éxito", "Se ha liberado la caché local por completo.")
+            freed_str = format_bytes(res.get("freed_bytes", 0))
+            skipped = res.get("skipped_dirty", 0)
+            if skipped > 0:
+                QMessageBox.information(
+                    self,
+                    "Caché liberada de forma segura",
+                    f"Se liberaron {freed_str} de archivos ya sincronizados.\n"
+                    f"Se protegieron {skipped} archivo(s) que aún se están subiendo a la nube."
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Éxito",
+                    f"Se ha liberado la caché local de forma segura ({freed_str})."
+                )

@@ -194,12 +194,6 @@ class MountProcess:
         vfs_stats = self.rc.get_vfs_stats(self.remote_name)
         if vfs_stats:
             self.last_vfs_stats = vfs_stats
-        # Quota check every 60 seconds
-        if time.time() - getattr(self, "last_quota_time", 0) > 60:
-            quota = self.rc.get_quota(self.remote_name)
-            self.last_quota_time = time.time()
-            if quota:
-                self.last_quota = quota
 
         newly_completed = []
         if stats:
@@ -326,6 +320,8 @@ class SyncEngine(QObject):
                 "download_speed": 0,
                 "upload_speed": 0,
                 "total_bytes": 0,
+                "uploads_in_progress": 0,
+                "uploads_queued": 0,
                 "active_transfers": [],
                 "accounts": {},
                 "is_paused": all(mp.is_paused for mp in self.mounts.values()) if self.mounts else False
@@ -349,8 +345,11 @@ class SyncEngine(QObject):
                 combined["total_bytes"] += bytes_done
 
                 disk_cache = vfs_stats.get("diskCache", {})
-                uploads_active = (disk_cache.get("uploadsInProgress", 0) > 0 or 
-                                  disk_cache.get("uploadsQueued", 0) > 0)
+                up_in_prog = disk_cache.get("uploadsInProgress", 0)
+                up_queued = disk_cache.get("uploadsQueued", 0)
+                combined["uploads_in_progress"] += up_in_prog
+                combined["uploads_queued"] += up_queued
+                uploads_active = (up_in_prog > 0 or up_queued > 0)
 
                 transferring = stats.get("transferring", [])
                 acc_down_speed = 0

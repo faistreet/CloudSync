@@ -216,7 +216,14 @@ class CloudSyncApp:
                         self.notifications.send("Disponible sin conexión", f"'{fname}' ({b_total}) descargado a {speed_str}/s.")
                 elif action == "free":
                     b_freed = format_bytes(res.get("freed_bytes", 0))
-                    self.notifications.send("Espacio liberado", f"'{fname}' ({b_freed}) ahora es solo virtual en la nube.")
+                    skipped = res.get("skipped_dirty", 0)
+                    if skipped > 0:
+                        self.notifications.send(
+                            "Espacio liberado parcialmente",
+                            f"Liberados {b_freed} en '{fname}'. Se protegieron {skipped} archivo(s) aún subiendo a la nube."
+                        )
+                    else:
+                        self.notifications.send("Espacio liberado", f"'{fname}' ({b_freed}) ahora es solo virtual en la nube.")
             else:
                 err = res.get("error", "Error desconocido")
                 self.notifications.send("Error", err, urgency="warning")
@@ -229,6 +236,21 @@ class CloudSyncApp:
         )
 
     def quit_app(self):
+        pending = self.vfs_controller.count_pending_uploads()
+        if pending > 0:
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.warning(
+                self.popup,
+                "Subidas en curso",
+                f"Aún hay {pending} archivo(s) pendientes de terminar de subir a la nube.\n\n"
+                "Si cierras CloudSync ahora, la subida se pausará y continuará la próxima vez que abras la aplicación.\n"
+                "¿Deseas salir de todos modos?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+
         print("[CloudSync] Cerrando aplicación y desmontando unidades...")
         self.ipc_server.stop()
         self.tray.hide()

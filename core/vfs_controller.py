@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 from pathlib import Path
 
@@ -24,10 +25,90 @@ class VFSController:
         self.config_manager = config_manager
         self.sync_engine = sync_engine
 
+    def is_file_dirty(self, remote_name, rel_path):
+        """
+        Checks rclone vfsMeta JSON to determine if a cached file has pending writes
+        ('Dirty': true) or lacks a remote cloud 'Fingerprint'.
+        Returns True if the file is still uploading/pending upload and MUST NOT be deleted.
+        """
+        cache_dir = Path(self.config_manager.cache_dir).resolve()
+        meta_file = cache_dir / "vfsMeta" / remote_name / rel_path
+        if not meta_file.exists() or not meta_file.is_file():
+            # If cached file exists without metadata yet, treat as dirty to protect it
+            return True
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if meta.get("Dirty", False):
+                return True
+            if not meta.get("Fingerprint"):
+                # Empty Fingerprint means rclone has not yet confirmed the file on the cloud server
+                return True
+            return False
+        except Exception:
+            return True
+
+    def count_pending_uploads(self):
+        """
+        Counts how many files across all accounts are currently uploading or queued to upload.
+        """
+        dirty_count = 0
+        cache_dir = Path(self.config_manager.cache_dir).resolve()
+        vfs_base = cache_dir / "vfs"
+        if vfs_base.exists():
+            for remote_dir in vfs_base.iterdir():
+                if not remote_dir.is_dir():
+                    continue
+                remote_name = remote_dir.name
+                for root, _, files in os.walk(remote_dir):
+                    for f in files:
+                        fp = Path(root) / f
+                        try:
+                            rel = str(fp.relative_to(remote_dir))
+                            if self.is_file_dirty(remote_name, rel):
+                                dirty_count += 1
+                        except Exception:
+                            pass
+
+        rc_pending = 0
+        if self.sync_engine:
+            for mp in self.sync_engine.mounts.values():
+                dc = mp.last_vfs_stats.get("diskCache", {})
+                rc_pending += dc.get("uploadsInProgress", 0) + dc.get("uploadsQueued", 0)
+
+        return max(dirty_count, rc_pending)
+
+    def free_all_cache_safe(self):
+        """
+        Safely frees all cached files across all accounts that are already 100% synced in the cloud,
+        strictly preserving any file that is still uploading or pending upload.
+        """
+        total_freed = 0
+        total_deleted = 0
+        total_skipped = 0
+
+        for acc_id in self.config_manager.get_accounts():
+            mount_path = self.config_manager.get_mount_path_for_account(acc_id)
+            if os.path.exists(mount_path):
+                res = self.free_space(mount_path)
+                total_freed += res.get("freed_bytes", 0)
+                total_deleted += res.get("deleted_count", 0)
+                total_skipped += res.get("skipped_dirty", 0)
+
+        return {
+            "success": True,
+            "freed_bytes": total_freed,
+            "deleted_count": total_deleted,
+            "skipped_dirty": total_skipped
+        }
+
     def get_file_sync_status(self, target_path):
         """
-        Returns 'local' if downloaded to local cache,
-        'cloud' if virtual placeholder in cloud, or 'unknown'.
+        Returns:
+        - 'uploading' if in local cache with Dirty=True (pending upload to cloud)
+        - 'local' if downloaded/synced in local cache with Dirty=False
+        - 'cloud' if virtual placeholder in cloud
+        - 'unknown' if outside mount
         """
         path = Path(target_path).resolve()
         if not path.exists():
@@ -37,17 +118,30 @@ class VFSController:
         if not acc_id or not remote_name:
             return "unknown"
 
+        cache_dir = Path(self.config_manager.cache_dir).resolve()
+        vfs_root = cache_dir / "vfs" / remote_name
+        vfs_cache_target = vfs_root / rel_path
+
         if path.is_dir():
-            # For directories, check if any file in it is cached
-            cache_dir = Path(self.config_manager.cache_dir).resolve()
-            vfs_cache_target = cache_dir / "vfs" / remote_name / rel_path
-            if vfs_cache_target.exists():
-                return "local"
+            if vfs_cache_target.exists() and vfs_cache_target.is_dir():
+                has_any_file = False
+                for root, _, files in os.walk(vfs_cache_target):
+                    for f in files:
+                        has_any_file = True
+                        fp = Path(root) / f
+                        try:
+                            file_rel = str(fp.relative_to(vfs_root))
+                            if self.is_file_dirty(remote_name, file_rel):
+                                return "uploading"
+                        except Exception:
+                            pass
+                if has_any_file:
+                    return "local"
             return "cloud"
 
-        cache_dir = Path(self.config_manager.cache_dir).resolve()
-        vfs_cache_target = cache_dir / "vfs" / remote_name / rel_path
         if vfs_cache_target.exists() and vfs_cache_target.is_file():
+            if self.is_file_dirty(remote_name, rel_path):
+                return "uploading"
             try:
                 if vfs_cache_target.stat().st_size > 0:
                     return "local"
@@ -189,6 +283,8 @@ class VFSController:
         """
         Removes the hydrated file from the local rclone VFS cache,
         turning it back into a virtual placeholder (files on-demand).
+        Strictly protects any file with Dirty=True (pending upload to the cloud)
+        so active or queued uploads are never interrupted or lost.
         """
         path = Path(target_path).resolve()
         acc_id, remote_name, rel_path, mount_path = get_relative_and_account(path, self.config_manager)
@@ -200,54 +296,95 @@ class VFSController:
             }
 
         cache_dir = Path(self.config_manager.cache_dir).resolve()
-        vfs_cache_target = cache_dir / "vfs" / remote_name / rel_path
-        meta_cache_target = cache_dir / "vfsMeta" / remote_name / rel_path
+        vfs_root = cache_dir / "vfs" / remote_name
+        meta_root = cache_dir / "vfsMeta" / remote_name
+        vfs_cache_target = vfs_root / rel_path
+        meta_cache_target = meta_root / rel_path
+
+        rc = None
+        if self.sync_engine and acc_id in self.sync_engine.mounts:
+            rc = self.sync_engine.mounts[acc_id].rc
 
         freed_bytes = 0
         deleted_count = 0
+        skipped_dirty = 0
 
         if vfs_cache_target.exists():
             if vfs_cache_target.is_file():
-                freed_bytes += vfs_cache_target.stat().st_size
+                if self.is_file_dirty(remote_name, rel_path):
+                    return {
+                        "success": False,
+                        "error": f"'{path.name}' aún se está subiendo a la nube. Espera a que termine de sincronizar antes de liberar espacio."
+                    }
                 try:
+                    freed_bytes += vfs_cache_target.stat().st_size
                     vfs_cache_target.unlink()
                     deleted_count += 1
+                    if meta_cache_target.exists() and meta_cache_target.is_file():
+                        meta_cache_target.unlink()
+                    if rc:
+                        rc.forget_file(rel_path)
                 except Exception as e:
                     print(f"[VFSController] Error deleting cache file {vfs_cache_target}: {e}")
+
             elif vfs_cache_target.is_dir():
-                for root, _, files in os.walk(vfs_cache_target):
+                for root, dirs, files in os.walk(vfs_cache_target, topdown=False):
                     for f in files:
                         fp = Path(root) / f
+                        try:
+                            file_rel = str(fp.relative_to(vfs_root))
+                        except ValueError:
+                            continue
+
+                        if self.is_file_dirty(remote_name, file_rel):
+                            # Protect file: still waiting to upload to the cloud
+                            skipped_dirty += 1
+                            continue
+
                         try:
                             freed_bytes += fp.stat().st_size
                             fp.unlink()
                             deleted_count += 1
-                        except Exception:
+                            meta_fp = meta_root / file_rel
+                            if meta_fp.exists() and meta_fp.is_file():
+                                meta_fp.unlink()
+                            if rc:
+                                rc.forget_file(file_rel)
+                        except Exception as e:
+                            print(f"[VFSController] Error deleting cached file {fp}: {e}")
+
+                    # Remove directory only if it is now completely empty
+                    try:
+                        os.rmdir(root)
+                    except OSError:
+                        pass
+
+                # Clean up any empty directories in vfsMeta
+                if meta_cache_target.exists() and meta_cache_target.is_dir():
+                    for root, dirs, files in os.walk(meta_cache_target, topdown=False):
+                        try:
+                            os.rmdir(root)
+                        except OSError:
                             pass
-                shutil.rmtree(vfs_cache_target, ignore_errors=True)
 
-        if meta_cache_target.exists():
-            if meta_cache_target.is_file():
-                try:
-                    meta_cache_target.unlink()
-                except Exception:
-                    pass
-            elif meta_cache_target.is_dir():
-                shutil.rmtree(meta_cache_target, ignore_errors=True)
+                if skipped_dirty == 0 and rc:
+                    rc.forget_dir(rel_path)
 
-        # Notify rclone through RC API to forget the local cache entry
-        if self.sync_engine and acc_id in self.sync_engine.mounts:
-            rc = self.sync_engine.mounts[acc_id].rc
-            if path.is_file():
-                rc.forget_file(rel_path)
-            else:
-                rc.forget_dir(rel_path)
+        if deleted_count == 0 and skipped_dirty > 0:
+            return {
+                "success": False,
+                "error": (
+                    f"No se puede liberar espacio todavía: hay {skipped_dirty} archivo(s) en '{path.name}' "
+                    "que aún se están subiendo a la nube."
+                )
+            }
 
         return {
             "success": True,
             "name": path.name,
             "freed_bytes": freed_bytes,
-            "deleted_count": deleted_count
+            "deleted_count": deleted_count,
+            "skipped_dirty": skipped_dirty
         }
 
     def get_cache_disk_usage(self):

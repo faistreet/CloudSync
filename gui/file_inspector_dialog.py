@@ -76,7 +76,12 @@ class FileInspectorDialog(QDialog):
         filter_bar.addWidget(self.search_input, stretch=2)
 
         self.filter_combo = QComboBox()
-        self.filter_combo.addItems(["Todos los archivos", "Solo en la nube ☁️", "Descargados en PC 💾"])
+        self.filter_combo.addItems([
+            "Todos los archivos",
+            "Solo en la nube ☁️",
+            "Descargados en PC 💾",
+            "Pendientes de subir ⏳"
+        ])
         self.filter_combo.currentIndexChanged.connect(self.apply_filters)
         filter_bar.addWidget(self.filter_combo, stretch=1)
 
@@ -178,16 +183,19 @@ class FileInspectorDialog(QDialog):
 
     def apply_filters(self):
         search_query = self.search_input.text().strip().lower()
-        filter_mode = self.filter_combo.currentIndex() # 0: All, 1: Cloud only, 2: Local only
+        filter_mode = self.filter_combo.currentIndex() # 0: All, 1: Cloud, 2: Local, 3: Uploading
 
         filtered = []
         local_count = 0
+        uploading_count = 0
         cloud_count = 0
 
         for item in self.all_items:
             if not item["is_dir"]:
                 if item["status"] == "local":
                     local_count += 1
+                elif item["status"] == "uploading":
+                    uploading_count += 1
                 else:
                     cloud_count += 1
 
@@ -200,12 +208,15 @@ class FileInspectorDialog(QDialog):
                 continue
             if filter_mode == 2 and item["status"] != "local" and not item["is_dir"]:
                 continue
+            if filter_mode == 3 and item["status"] != "uploading" and not item["is_dir"]:
+                continue
 
             filtered.append(item)
 
         self.populate_table(filtered)
+        up_str = f" | ⏳ {uploading_count} subiendo a la nube" if uploading_count > 0 else ""
         self.summary_label.setText(
-            f"Mostrando {len(filtered)} elementos | 💾 {local_count} descargados en este equipo | ☁️ {cloud_count} solo en la nube"
+            f"Mostrando {len(filtered)} elementos | 💾 {local_count} en este equipo{up_str} | ☁️ {cloud_count} solo en la nube"
         )
 
     def populate_table(self, items):
@@ -227,8 +238,18 @@ class FileInspectorDialog(QDialog):
 
             # Column 2: Status Badge
             if item["is_dir"]:
-                status_widget = QLabel("Carpeta")
-                status_widget.setStyleSheet("color: #94a3b8; font-weight: bold; padding: 2px 8px;")
+                if item["status"] == "uploading":
+                    status_widget = QLabel("⏳ Carpeta subiendo")
+                    status_widget.setObjectName("statusPillPaused")
+                elif item["status"] == "local":
+                    status_widget = QLabel("💾 Con datos locales")
+                    status_widget.setObjectName("statusPillSuccess")
+                else:
+                    status_widget = QLabel("Carpeta")
+                    status_widget.setStyleSheet("color: #94a3b8; font-weight: bold; padding: 2px 8px;")
+            elif item["status"] == "uploading":
+                status_widget = QLabel("⏳ Subiendo a la nube")
+                status_widget.setObjectName("statusPillPaused")
             elif item["status"] == "local":
                 status_widget = QLabel("💾 En este equipo")
                 status_widget.setObjectName("statusPillSuccess")
@@ -240,21 +261,30 @@ class FileInspectorDialog(QDialog):
 
             # Column 3: Action Button
             if item["is_dir"]:
-                # Pin folder button
                 btn = QPushButton("📥 Descargar todo")
                 btn.setObjectName("secondaryBtn")
                 btn.clicked.connect(lambda _, p=item["path"]: self.trigger_action("pin", p))
+                btn.setStyleSheet("padding: 2px 10px; font-size: 11px;")
+                self.table.setCellWidget(row, 3, btn)
+            elif item["status"] == "uploading":
+                btn = QPushButton("⏳ Sincronizando...")
+                btn.setObjectName("secondaryBtn")
+                btn.setEnabled(False)
+                btn.setToolTip("Este archivo aún se está subiendo a la nube. Se podrá liberar espacio cuando termine.")
+                btn.setStyleSheet("padding: 2px 10px; font-size: 11px; color: #fbbf24;")
+                self.table.setCellWidget(row, 3, btn)
             elif item["status"] == "local":
                 btn = QPushButton("🗑️ Liberar espacio")
                 btn.setObjectName("secondaryBtn")
                 btn.clicked.connect(lambda _, p=item["path"]: self.trigger_action("free", p))
+                btn.setStyleSheet("padding: 2px 10px; font-size: 11px;")
+                self.table.setCellWidget(row, 3, btn)
             else:
                 btn = QPushButton("📥 Descargar")
                 btn.setObjectName("secondaryBtn")
                 btn.clicked.connect(lambda _, p=item["path"]: self.trigger_action("pin", p))
-
-            btn.setStyleSheet("padding: 2px 10px; font-size: 11px;")
-            self.table.setCellWidget(row, 3, btn)
+                btn.setStyleSheet("padding: 2px 10px; font-size: 11px;")
+                self.table.setCellWidget(row, 3, btn)
 
     def on_cell_double_clicked(self, row, col):
         item_cell = self.table.item(row, 0)
@@ -323,10 +353,16 @@ class FileInspectorDialog(QDialog):
                 self.summary_label.setText(f"✓ '{fname}' ({b}) disponible sin conexión.")
             else:
                 b = format_bytes(res.get("freed_bytes", 0))
-                self.summary_label.setText(f"✓ Espacio liberado para '{fname}' ({b}).")
+                skipped = res.get("skipped_dirty", 0)
+                if skipped > 0:
+                    self.summary_label.setText(
+                        f"✓ Liberado '{fname}' ({b}). Se protegieron {skipped} archivo(s) aún subiendo a la nube."
+                    )
+                else:
+                    self.summary_label.setText(f"✓ Espacio liberado para '{fname}' ({b}).")
         else:
             err = res.get("error", "Error desconocido")
-            QMessageBox.warning(self, "Error", f"No se pudo completar la operación:\n{err}")
+            QMessageBox.warning(self, "Atención", f"No se pudo completar la operación:\n{err}")
 
     def on_worker_finished(self, res):
         self.on_action_finished(res)
