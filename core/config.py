@@ -4,8 +4,8 @@ import threading
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "cloudsync" / "config.json"
-DEFAULT_BASE_DIR = "/run/media/santiagoecg/DATOS/CloudSync"
-DEFAULT_CACHE_DIR = "/run/media/santiagoecg/DATOS/CloudSync/.cache"
+DEFAULT_BASE_DIR = str(Path.home() / "CloudSync")
+DEFAULT_CACHE_DIR = str(Path.home() / ".cache" / "cloudsync")
 
 DEFAULT_SETTINGS = {
     "base_dir": DEFAULT_BASE_DIR,
