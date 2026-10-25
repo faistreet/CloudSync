@@ -20,10 +20,10 @@ completo para Archivos a petición (Files On-Demand) y transferencia directa
 entre nubes.
 
 %prep
-# No prep stage needed for source directory packaging
+# El directorio preparado contiene los archivos
 
 %build
-# Pure Python application
+# Aplicación en Python puro
 
 %install
 rm -rf %{buildroot}
@@ -36,7 +36,13 @@ mkdir -p %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
 mkdir -p %{buildroot}%{_datadir}/kio/servicemenus
 
 # Copiar archivos de la aplicación
-cp -a main.py cloudsync_cli.py core gui assets integration %{buildroot}%{_datadir}/%{name}/
+cp -a %{_builddir}/cloudsync-%{version}/main.py \
+      %{_builddir}/cloudsync-%{version}/cloudsync_cli.py \
+      %{_builddir}/cloudsync-%{version}/core \
+      %{_builddir}/cloudsync-%{version}/gui \
+      %{_builddir}/cloudsync-%{version}/assets \
+      %{_builddir}/cloudsync-%{version}/integration \
+      %{buildroot}%{_datadir}/%{name}/
 
 # Wrapper ejecutable principal /usr/bin/cloudsync
 cat << 'EOF' > %{buildroot}%{_bindir}/cloudsync
@@ -53,7 +59,7 @@ EOF
 chmod 755 %{buildroot}%{_bindir}/cloudsync-cli
 
 # Instalar icono vectorial SVG
-install -m 644 assets/icons/app_icon.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/cloudsync.svg
+install -m 644 %{_builddir}/cloudsync-%{version}/assets/icons/app_icon.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/cloudsync.svg
 
 # Instalar lanzador de escritorio .desktop
 cat << 'EOF' > %{buildroot}%{_datadir}/applications/cloudsync.desktop

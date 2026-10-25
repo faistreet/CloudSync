@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Compilar RPM en Fedora
+    name: Compilar RPM
     runs-on: ubuntu-latest
 
     steps:
@@ -42,14 +42,15 @@ jobs:
           echo "TAG_NAME=${VER}" >> $GITHUB_ENV
           echo "Compilando RPM versión: ${RPM_VER} para tag: ${VER}"
 
-      - name: Construir paquete RPM en contenedor Fedora
+      - name: Instalar herramientas de RPM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Construir paquete RPM
         run: |
           chmod +x packaging/build_rpm.sh
-          docker run --rm \
-            -v "$PWD":/workspace \
-            -w /workspace \
-            fedora:latest \
-            bash -c "dnf install -y rpm-build && ./packaging/build_rpm.sh ${{ env.VERSION }}"
+          ./packaging/build_rpm.sh "${{ env.VERSION }}"
 
       - name: Guardar paquete como artefacto de GitHub Actions
         uses: actions/upload-artifact@v4
@@ -64,3 +65,5 @@ jobs:
         with:
           files: dist/*.rpm
           tag_name: ${{ env.TAG_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
