@@ -1,0 +1,63 @@
+name: Build and Release RPM
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión para empaquetar (ej. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-rpm:
+    name: Compilar RPM en Fedora
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Determinar versión
+        id: version_step
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER="${GITHUB_REF#refs/tags/v}"
+          fi
+          # Eliminar prefijo 'v' si existe
+          VER="${VER#v}"
+          echo "VERSION=${VER}" >> $GITHUB_ENV
+          echo "Compilando versión: ${VER}"
+
+      - name: Construir paquete RPM en contenedor Fedora
+        run: |
+          chmod +x packaging/build_rpm.sh
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -w /workspace \
+            fedora:latest \
+            bash -c "dnf install -y rpm-build && ./packaging/build_rpm.sh ${{ env.VERSION }}"
+
+      - name: Guardar paquete como artefacto de GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudsync-rpm-v${{ env.VERSION }}
+          path: dist/*.rpm
+          retention-days: 14
+
+      - name: Publicar en GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.rpm
+          name: CloudSync v${{ env.VERSION }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
