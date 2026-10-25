@@ -36,11 +36,11 @@ jobs:
           else
             VER="${GITHUB_REF#refs/tags/}"
           fi
-          # Eliminar prefijo 'v' si existe para el paquete RPM
+          # Asegurar formato estándar para RPM y para el Tag
           RPM_VER="${VER#v}"
           echo "VERSION=${RPM_VER}" >> $GITHUB_ENV
-          echo "TAG_NAME=${VER}" >> $GITHUB_ENV
-          echo "Compilando RPM versión: ${RPM_VER} para tag: ${VER}"
+          echo "TAG_NAME=v${RPM_VER}" >> $GITHUB_ENV
+          echo "Compilando RPM versión: ${RPM_VER} para tag: v${RPM_VER}"
 
       - name: Instalar herramientas de RPM
         run: |
@@ -60,10 +60,10 @@ jobs:
           retention-days: 14
 
       - name: Publicar o adjuntar en GitHub Releases
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.rpm
           tag_name: ${{ env.TAG_NAME }}
+          name: CloudSync ${{ env.TAG_NAME }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
