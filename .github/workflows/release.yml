@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -28,13 +31,16 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VER="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            VER="${{ github.event.release.tag_name }}"
           else
-            VER="${GITHUB_REF#refs/tags/v}"
+            VER="${GITHUB_REF#refs/tags/}"
           fi
-          # Eliminar prefijo 'v' si existe
-          VER="${VER#v}"
-          echo "VERSION=${VER}" >> $GITHUB_ENV
-          echo "Compilando versión: ${VER}"
+          # Eliminar prefijo 'v' si existe para el paquete RPM
+          RPM_VER="${VER#v}"
+          echo "VERSION=${RPM_VER}" >> $GITHUB_ENV
+          echo "TAG_NAME=${VER}" >> $GITHUB_ENV
+          echo "Compilando RPM versión: ${RPM_VER} para tag: ${VER}"
 
       - name: Construir paquete RPM en contenedor Fedora
         run: |
@@ -52,12 +58,9 @@ jobs:
           path: dist/*.rpm
           retention-days: 14
 
-      - name: Publicar en GitHub Releases
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publicar o adjuntar en GitHub Releases
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.rpm
-          name: CloudSync v${{ env.VERSION }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
+          tag_name: ${{ env.TAG_NAME }}
