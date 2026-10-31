@@ -319,6 +319,10 @@ class SyncEngine(QObject):
         if acc_id in self.mounts:
             self.mounts[acc_id].rc.refresh_vfs()
 
+    def refresh_all_accounts(self):
+        for acc_id in list(self.mounts.keys()):
+            self.refresh_account(acc_id)
+
     def get_mount_for_path(self, target_path):
         target = str(Path(target_path).resolve())
         for acc_id, mp in self.mounts.items():

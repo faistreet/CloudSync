@@ -149,6 +149,7 @@ class PopupWindow(QWidget):
         # Session-based download history (cleared on app restart)
         self.session_downloads = []
         self.active_hydration = None
+        self._is_offline = False
 
         self.setWindowTitle("CloudSync - Sincronización en la nube")
         self.setObjectName("popupWindowRoot")
@@ -240,6 +241,25 @@ class PopupWindow(QWidget):
         header_layout.addWidget(close_btn)
 
         root_layout.addWidget(header)
+
+        # 1.5 Offline Alert Banner
+        self.offline_banner = QFrame()
+        self.offline_banner.setObjectName("offlineBanner")
+        offline_layout = QHBoxLayout(self.offline_banner)
+        offline_layout.setContentsMargins(14, 8, 14, 8)
+        offline_layout.setSpacing(10)
+
+        warn_icon = QLabel("⚠️")
+        warn_icon.setStyleSheet("font-size: 15px;")
+        offline_layout.addWidget(warn_icon)
+
+        warn_text = QLabel("Sin conexión a internet. Los archivos descargados siguen disponibles sin conexión en este equipo.")
+        warn_text.setWordWrap(True)
+        warn_text.setStyleSheet("color: #fef3c7; font-size: 12px; font-weight: 500;")
+        offline_layout.addWidget(warn_text, stretch=1)
+
+        self.offline_banner.setVisible(False)
+        root_layout.addWidget(self.offline_banner)
 
         # 2. Scrollable Body
         scroll = QScrollArea()
@@ -411,6 +431,22 @@ class PopupWindow(QWidget):
             self.account_cards[acc_id] = card
             self.accounts_container.addWidget(card)
 
+    def set_offline_mode(self, is_offline):
+        self._is_offline = is_offline
+        self.offline_banner.setVisible(is_offline)
+        if is_offline:
+            self.subtitle_lbl.setText("Modo sin conexión (Solo archivos locales)")
+            self.subtitle_lbl.setStyleSheet("font-size: 12px; color: #f59e0b;")
+            self.status_msg_label.setText("Sin conexión a internet")
+            self.status_msg_label.setStyleSheet("color: #f59e0b; font-weight: 600; font-size: 13px;")
+            self.down_speed_label.setText("↓ 0 B/s")
+            self.up_speed_label.setText("↑ 0 B/s")
+        else:
+            self.subtitle_lbl.setText("Archivos a petición activos")
+            self.subtitle_lbl.setStyleSheet("font-size: 12px; color: #94a3b8;")
+            self.status_msg_label.setText("Todo al día")
+            self.status_msg_label.setStyleSheet("color: #10b981; font-weight: 600; font-size: 13px;")
+
     def on_stats_updated(self, stats):
         down_speed = stats.get("download_speed", 0)
         up_speed = stats.get("upload_speed", 0)
@@ -425,7 +461,13 @@ class PopupWindow(QWidget):
 
         self.pause_btn.setText("Reanudar" if is_paused else "Pausar")
 
-        if is_paused:
+        if self._is_offline:
+            self.down_speed_label.setText("↓ 0 B/s")
+            self.up_speed_label.setText("↑ 0 B/s")
+            self.status_msg_label.setText("Sin conexión a internet")
+            self.status_msg_label.setStyleSheet("color: #f59e0b; font-weight: 600; font-size: 13px;")
+            self.subtitle_lbl.setText("Modo sin conexión (Solo archivos locales)")
+        elif is_paused:
             self.down_speed_label.setText("↓ Pausado")
             self.up_speed_label.setText("↑ Pausado")
             self.status_msg_label.setText("Pausado")

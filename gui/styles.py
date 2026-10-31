@@ -60,6 +60,13 @@ QFrame#headerFrame {
     border-bottom: 1px solid #334155;
 }
 
+QFrame#offlineBanner {
+    background-color: #451a03;
+    border: 1px solid #d97706;
+    border-radius: 8px;
+    margin: 8px 16px 0px 16px;
+}
+
 /* Buttons - Standardized uniform height & sizing */
 QPushButton {
     background-color: #273549;

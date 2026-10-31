@@ -18,6 +18,7 @@ from core.account_manager import AccountManager
 from core.vfs_controller import VFSController
 from core.cloud_transfer import CloudTransferManager
 from core.notifications import NotificationManager
+from core.network_monitor import NetworkMonitor
 from core.ipc import CloudSyncIPCServer
 from gui.tray_icon import CloudSyncTray
 from gui.popup_window import PopupWindow, format_bytes
@@ -62,6 +63,11 @@ class CloudSyncApp:
         self.ipc_server.command_received.connect(self.on_ipc_command)
         self.ipc_server.start()
 
+        # Network Connectivity Monitor
+        self.network_monitor = NetworkMonitor()
+        self.network_monitor.connectivity_changed.connect(self.on_connectivity_changed)
+        self.network_monitor.start()
+
         self.connect_signals()
 
         # Start synchronization engine
@@ -87,6 +93,10 @@ class CloudSyncApp:
         self.sync_engine.transfer_completed.connect(self.on_transfer_completed)
 
     def on_stats_updated(self, stats):
+        if not self.network_monitor.is_online:
+            self.tray.set_state("offline", "CloudSync - Sin conexión (Modo local)")
+            return
+
         is_paused = stats.get("is_paused", False)
         active_transfers = stats.get("active_transfers", [])
         down_speed = stats.get("download_speed", 0)
@@ -102,6 +112,23 @@ class CloudSyncApp:
                 self.tray.set_state("syncing", f"CloudSync - Descargando: {format_bytes(spd)}/s")
         else:
             self.tray.set_state("idle", "CloudSync - Todo al día")
+
+    def on_connectivity_changed(self, is_online):
+        self.popup.set_offline_mode(not is_online)
+        if not is_online:
+            self.tray.set_state("offline", "CloudSync - Sin conexión (Modo local)")
+            self.notifications.send(
+                "Modo sin conexión",
+                "Se ha perdido la conexión a internet. CloudSync continuará funcionando con tus archivos locales.",
+                urgency="low"
+            )
+        else:
+            self.tray.set_state("idle", "CloudSync - Todo al día")
+            self.notifications.send(
+                "Conexión restablecida",
+                "CloudSync vuelve a sincronizar normalmente con la nube."
+            )
+            self.sync_engine.refresh_all_accounts()
 
     def on_transfer_completed(self, item):
         direction = item.get("direction", "down")
@@ -309,6 +336,7 @@ class CloudSyncApp:
                 return
 
         print("[CloudSync] Cerrando aplicación y desmontando unidades...")
+        self.network_monitor.stop()
         self.ipc_server.stop()
         self.tray.hide()
         self.popup.hide()

@@ -93,6 +93,9 @@ class CloudSyncTray(QSystemTrayIcon):
             self.setIcon(self.icon_paused)
             self.pause_action.setText("Reanudar sincronización")
             self.setToolTip(tooltip_text or "CloudSync - Pausado")
+        elif state == "offline":
+            self.setIcon(self.icon_paused)
+            self.setToolTip(tooltip_text or "CloudSync - Sin conexión (Modo local)")
         elif state == "error":
             self.setIcon(self.icon_error)
             self.setToolTip(tooltip_text or "CloudSync - Error")
