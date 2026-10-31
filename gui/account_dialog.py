@@ -132,7 +132,7 @@ class AccountWizardDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(10)
 
-        lbl = QLabel("Vincular Microsoft OneDrive:")
+        lbl = QLabel("Vincular Microsoft OneDrive mediante navegador web:")
         lbl.setStyleSheet("color: #f1f5f9; font-weight: 500;")
         layout.addWidget(lbl)
 
@@ -144,13 +144,17 @@ class AccountWizardDialog(QDialog):
         self.onedrive_folder = QLineEdit("OneDrive")
         layout.addWidget(self.onedrive_folder)
 
-        info = QLabel("• Puedes usar la configuración guiada en terminal para seleccionar Personal o Empresa.\n• Se abrirá una ventana de Konsole para completar el inicio de sesión en Microsoft de forma segura.")
+        info = QLabel(
+            "• Al pulsar el botón, se abrirá tu navegador web predeterminado.\n"
+            "• Inicia sesión con tu cuenta de Microsoft (Personal, Educativa o Trabajo) y autoriza el acceso.\n"
+            "• CloudSync detectará tu unidad automáticamente sin necesidad de usar la terminal."
+        )
         info.setStyleSheet("color: #94a3b8; font-size: 12px;")
         layout.addWidget(info)
 
         layout.addSpacing(10)
 
-        self.onedrive_btn = QPushButton("Abrir Asistente OneDrive (Konsole)")
+        self.onedrive_btn = QPushButton("Iniciar sesión con Microsoft")
         self.onedrive_btn.setObjectName("primaryBtn")
         self.onedrive_btn.clicked.connect(self.start_onedrive_auth)
         layout.addWidget(self.onedrive_btn)
@@ -246,17 +250,24 @@ class AccountWizardDialog(QDialog):
     def start_onedrive_auth(self):
         desired_folder = self.onedrive_folder.text().strip() or "OneDrive"
         acc_id, remote_name, folder = self._get_unique_account_ids("OneDrive", "cloudsync_onedrive", desired_folder)
+        self._pending_onedrive = (acc_id, remote_name, folder)
 
         # Check if already authenticated and valid
         ok, _ = self.account_manager.test_remote_connection(remote_name)
         if ok:
-            self.config_manager.add_or_update_account(acc_id, {
+            acc_data = {
                 "remote_name": remote_name,
                 "type": "onedrive",
                 "display_name": self.onedrive_name.text().strip() or acc_id,
                 "mount_folder": folder,
                 "enabled": True
-            })
+            }
+            email, name = self.account_manager.fetch_account_identity(remote_name, "onedrive")
+            if email:
+                acc_data["email"] = email
+            if name:
+                acc_data["owner_name"] = name
+            self.config_manager.add_or_update_account(acc_id, acc_data)
             QMessageBox.information(
                 self,
                 "Cuenta vinculada",
@@ -266,35 +277,61 @@ class AccountWizardDialog(QDialog):
             self.accept()
             return
 
-        self.status_box.setText("Iniciando Konsole para configurar OneDrive...")
-        cmd = ["rclone", "config"]
-        launched = self.account_manager.launch_assisted_terminal(cmd)
-        if launched:
-            reply = QMessageBox.information(
+        self.status_box.setText("Abriendo navegador web para autorizar OneDrive... Esperando confirmación.")
+        self.loading_bar.setVisible(True)
+        self.onedrive_btn.setEnabled(False)
+
+        def on_done(res):
+            self.on_onedrive_finished(res)
+
+        run_async_task(
+            self.account_manager.setup_onedrive_in_browser,
+            args=(remote_name,),
+            on_finished=on_done
+        )
+
+    def on_onedrive_finished(self, res):
+        self.loading_bar.setVisible(False)
+        self.onedrive_btn.setEnabled(True)
+        acc_id, remote_name, folder = getattr(
+            self, "_pending_onedrive", ("OneDrive", "cloudsync_onedrive", "OneDrive")
+        )
+
+        if res.get("success"):
+            acc_data = {
+                "remote_name": remote_name,
+                "type": "onedrive",
+                "display_name": self.onedrive_name.text().strip() or acc_id,
+                "mount_folder": folder,
+                "enabled": True
+            }
+            if res.get("email"):
+                acc_data["email"] = res["email"]
+            if res.get("owner_name"):
+                acc_data["owner_name"] = res["owner_name"]
+
+            self.config_manager.add_or_update_account(acc_id, acc_data)
+            QMessageBox.information(
                 self,
-                "Configuración de OneDrive en Konsole",
-                "Se ha abierto una terminal (Konsole).\n"
-                f"Crea el remoto con el nombre '{remote_name}' e inicia sesión en tu cuenta de Microsoft.\n\n"
-                "Una vez terminada la configuración en la terminal, pulsa 'Aceptar' aquí.",
-                QMessageBox.Ok | QMessageBox.Cancel
+                "Cuenta vinculada",
+                "Microsoft OneDrive ha sido vinculado y configurado correctamente en CloudSync."
             )
-            if reply == QMessageBox.Ok:
-                ok, err = self.account_manager.test_remote_connection(remote_name)
-                if ok:
-                    self.config_manager.add_or_update_account(acc_id, {
-                        "remote_name": remote_name,
-                        "type": "onedrive",
-                        "display_name": self.onedrive_name.text().strip() or acc_id,
-                        "mount_folder": folder,
-                        "enabled": True
-                    })
-                    QMessageBox.information(self, "Cuenta vinculada", "OneDrive ha sido configurado y vinculado exitosamente.")
-                    self.account_added.emit(acc_id)
-                    self.accept()
-                else:
-                    QMessageBox.warning(self, "Comprobación fallida", f"No se pudo validar el acceso a OneDrive:\n{err}")
+            self.account_added.emit(acc_id)
+            self.accept()
         else:
-            QMessageBox.critical(self, "Error", "No se encontró ningún emulador de terminal compatible instalado.")
+            err = res.get("message", "Error desconocido")
+            QMessageBox.critical(self, "Error de autenticación", f"No se pudo completar la vinculación:\n{err}")
+            self.status_box.setText("Error en la autenticación.")
+
+    def reject(self):
+        if hasattr(self, "account_manager") and self.account_manager:
+            self.account_manager.cancel_active_auth()
+        super().reject()
+
+    def closeEvent(self, event):
+        if hasattr(self, "account_manager") and self.account_manager:
+            self.account_manager.cancel_active_auth()
+        super().closeEvent(event)
 
     def import_existing_remote(self):
         idx = self.remote_combo.currentIndex()
