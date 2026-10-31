@@ -121,17 +121,50 @@ class CloudSyncApp:
         else:
             self.notifications.send("Descargado bajo demanda", f"'{f_name}' ({format_bytes(f_size)}) disponible en este equipo.")
 
+    def position_popup(self):
+        cursor_pos = QCursor.pos()
+        screen = QGuiApplication.screenAt(cursor_pos)
+        if not screen:
+            screen = QGuiApplication.primaryScreen()
+        if not screen:
+            return
+
+        avail = screen.availableGeometry()
+        pop_w = self.popup.width()
+        pop_h = self.popup.height()
+        margin = 12
+
+        tray_geo = self.tray.geometry()
+        if tray_geo.isValid() and avail.contains(tray_geo.center()):
+            # Centered over tray icon horizontally
+            target_x = tray_geo.center().x() - (pop_w // 2)
+            target_x = max(avail.left() + margin, min(target_x, avail.right() - pop_w - margin))
+
+            # Position above or below tray
+            if tray_geo.center().y() > avail.center().y():
+                target_y = tray_geo.top() - pop_h - 8
+            else:
+                target_y = tray_geo.bottom() + 8
+        else:
+            # Corner placement based on cursor location in active screen
+            if cursor_pos.y() > avail.center().y():
+                target_x = avail.right() - pop_w - margin
+                target_y = avail.bottom() - pop_h - margin
+            else:
+                target_x = avail.right() - pop_w - margin
+                target_y = avail.top() + margin
+
+        # Guarantee boundaries within available desktop area
+        target_x = max(avail.left() + margin, min(target_x, avail.right() - pop_w - margin))
+        target_y = max(avail.top() + margin, min(target_y, avail.bottom() - pop_h - margin))
+
+        self.popup.move(target_x, target_y)
+
     def toggle_popup(self):
         if self.popup.isVisible():
             self.popup.hide()
         else:
-            if not self._window_positioned:
-                screen = QGuiApplication.primaryScreen().availableGeometry()
-                x = screen.center().x() - (self.popup.width() // 2)
-                y = screen.center().y() - (self.popup.height() // 2)
-                self.popup.move(max(10, x), max(10, y))
-                self._window_positioned = True
-
+            self.position_popup()
             self.popup.show()
             self.popup.raise_()
             self.popup.activateWindow()
@@ -290,6 +323,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("CloudSync")
     app.setOrganizationName("CloudSync")
+    app.setDesktopFileName("cloudsync")
     app.setQuitOnLastWindowClosed(False)
 
     icon_path = Path(__file__).parent / "assets" / "icons" / "app_icon.svg"

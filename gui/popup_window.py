@@ -152,7 +152,8 @@ class PopupWindow(QWidget):
 
         self.setWindowTitle("CloudSync - Sincronización en la nube")
         self.setObjectName("popupWindowRoot")
-        self.setWindowFlags(Qt.Window)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setStyleSheet(MODERN_QSS)
         self.resize(480, 680)
         self.setMinimumSize(420, 520)
@@ -167,8 +168,21 @@ class PopupWindow(QWidget):
         event.ignore()
         self.hide()
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.hide()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
+            # Native Wayland/X11 compositor dragging from header area (top 65px)
+            if event.position().y() <= 65:
+                wh = self.windowHandle()
+                if wh and hasattr(wh, "startSystemMove") and wh.startSystemMove():
+                    event.accept()
+                    return
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
@@ -217,6 +231,13 @@ class PopupWindow(QWidget):
         settings_btn.setToolTip("Configuración")
         settings_btn.clicked.connect(self.open_settings_requested.emit)
         header_layout.addWidget(settings_btn)
+
+        # Close Panel Button
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("iconBtn")
+        close_btn.setToolTip("Cerrar panel (Esc)")
+        close_btn.clicked.connect(self.hide)
+        header_layout.addWidget(close_btn)
 
         root_layout.addWidget(header)
 

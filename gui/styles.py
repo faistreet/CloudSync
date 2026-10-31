@@ -6,8 +6,14 @@ QWidget {
     color: #f1f5f9;
 }
 
-QMainWindow, QDialog, QWidget#popupWindowRoot {
+QMainWindow, QDialog {
     background-color: #0f172a;
+}
+
+QWidget#popupWindowRoot {
+    background-color: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 12px;
 }
 
 /* ScrollBars */
@@ -49,6 +55,8 @@ QFrame#cardFrame:hover {
 
 QFrame#headerFrame {
     background-color: #1e293b;
+    border-top-left-radius: 11px;
+    border-top-right-radius: 11px;
     border-bottom: 1px solid #334155;
 }
 
